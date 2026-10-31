@@ -221,13 +221,22 @@ def _artist_channel(yt: YouTube, url: str, cache: dict) -> str | None:
                 params["forUsername"] = path.split("/")[1]
             else:
                 params["forHandle"] = path.split("/")[0] if path.startswith("@") else "@" + path.split("/")[-1]
-            data = common.get("https://www.googleapis.com/youtube/v3/channels", params=params)
+            data = yt.get("channels", params)
             yt.units += 1
             cid = ((data.get("items") or [{}])[0]).get("id")
     except common.FetchError:
-        cid = None
+        return None          # not cached: tried again on a later day
     cache[url] = cid
     return cid
+
+
+def _todo(entry: dict | None, now) -> bool:
+    """Not looked up yet, or found nothing more than 30 days ago (worth another try)."""
+    if entry is None:
+        return True
+    if entry.get("id"):
+        return False
+    return entry.get("none", "") < (now - timedelta(days=30)).strftime("%Y-%m-%d")
 
 
 def _match(song: dict, videos: list[dict]) -> list[dict]:
@@ -260,15 +269,19 @@ def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int
             if not hit or not common.within(common.parse_time(hit["at"]), 30 * 24):
                 channel_budget[0] -= 1
                 vids = yt.uploads(cid, pages=4)
+                if yt.exhausted:
+                    return "later"
                 hit = uploads[cid] = {"at": common.iso(common.now_utc()),
                                       "videos": [{"id": v["id"], "title": v["title"], "channel": v.get("channel"),
                                                   "published": v.get("published")} for v in vids]}
             candidates = _match(song, hit["videos"])
     if not candidates:
-        if search_budget[0] <= 0:
+        if search_budget[0] <= 0 or yt.exhausted:
             return "later"
         search_budget[0] -= 1
         found = yt.search(f"{song['artist']} {song['title']}", max_age_days=36500)
+        if yt.exhausted:
+            return "later"
         artist = common.norm(song["artist"])
         for v in _match(song, found):
             channel = common.norm(v.get("channel") or "")
@@ -277,6 +290,8 @@ def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int
     if not candidates:
         return None
     stats = _youtube_views(yt, [v["id"] for v in candidates])
+    if yt.exhausted and not stats:
+        return "later"
     best = max(candidates, key=lambda v: stats.get(v["id"], 0))
     return {"id": best["id"], "title": best["title"], "channel": best.get("channel"), "published": best.get("published")}
 
@@ -285,8 +300,7 @@ def _youtube_views(yt: YouTube, ids: list[str]) -> dict[str, int]:
     out = {}
     for i in range(0, len(ids), 50):
         try:
-            data = common.get("https://www.googleapis.com/youtube/v3/videos",
-                              params={"part": "statistics", "id": ",".join(ids[i:i + 50]), "key": yt.key})
+            data = yt.get("videos", {"part": "statistics", "id": ",".join(ids[i:i + 50])})
             yt.units += 1
         except common.FetchError as exc:
             common.log(f"music: youtube stats: {exc}")
@@ -374,7 +388,7 @@ def build(yt: YouTube | None = None) -> dict:
 
     itunes_budget, lastfm_budget = [ITUNES_PER_RUN], [LASTFM_PER_RUN]
     state.setdefault("lastfm", {})
-    state.setdefault("yt", {})        # song -> its YouTube video (looked up once, kept for good)
+    state.setdefault("yt", {})        # song -> its YouTube video (kept for good), or {"none": date} retried after 30 days
     state.setdefault("yt_views", {})  # video id -> {date: views}, last 10 days
     year_ago = (now - timedelta(days=365)).strftime("%Y-%m-%d")
     two_years = (now - timedelta(days=730)).strftime("%Y-%m-%d")
@@ -439,11 +453,11 @@ def build(yt: YouTube | None = None) -> dict:
                   for (_, _, _, at, rc, tr) in prepared.values()]
         for i in range(max((len(q) for q in queues), default=0)):
             for q in queues:
-                if i < len(q) and skey(q[i]) not in state["yt"]:
+                if i < len(q) and _todo(state["yt"].get(skey(q[i])), now):
                     found = _youtube_video(yt, q[i], state, search_budget, channel_budget)
                     if found != "later":   # "later": needs a search, and today's searches are used up
                         lookups[0] += 1
-                        state["yt"][skey(q[i])] = found or {}
+                        state["yt"][skey(q[i])] = found or {"none": today}
 
     # 3. Today's view counts for every known video (1 quota unit per 50 videos)
     ids = sorted({v["id"] for v in state["yt"].values() if v.get("id")})
@@ -469,7 +483,7 @@ def build(yt: YouTube | None = None) -> dict:
         span = (common.parse_time(days[-1]) - common.parse_time(days[0])).days or 1
         return (h[days[-1]] - h[days[0]]) * 7 / span, span   # views per 7 days
 
-    pending = sum(1 for (_, _, _, at, rc, tr) in prepared.values() for x in at + rc + tr if skey(x) not in state["yt"])
+    pending = sum(1 for (_, _, _, at, rc, tr) in prepared.values() for x in at + rc + tr if _todo(state["yt"].get(skey(x)), now))
 
     # 4. Rank by YouTube views
     genres = {}

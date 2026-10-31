@@ -23,6 +23,20 @@ class YouTube:
         self.key = common.env("YOUTUBE_API_KEY")
         self.cache = common.load_json(CACHE, {"search": {}})
         self.units = 0
+        self.exhausted = False   # set once YouTube refuses a call for quota; later calls are skipped
+
+    def get(self, path: str, params: dict) -> dict:
+        """One API call; after a quota refusal (429, or 403 quotaExceeded) every later call fails at once."""
+        if self.exhausted:
+            raise common.FetchError("YouTube daily quota used up")
+        try:
+            return common.get(f"{API}/{path}", params={**params, "key": self.key}, tries=1)
+        except common.FetchError as exc:
+            if "429" in str(exc) or "quota" in str(exc).lower():
+                if not self.exhausted:
+                    common.log(f"youtube: daily quota used up after {self.units} units; remaining lookups wait for tomorrow")
+                self.exhausted = True
+            raise
 
     @property
     def available(self) -> bool:
@@ -39,7 +53,7 @@ class YouTube:
             if token:
                 params["pageToken"] = token
             try:
-                data = common.get(f"{API}/playlistItems", params=params)
+                data = self.get("playlistItems", params)
             except common.FetchError as exc:
                 common.log(f"youtube uploads {channel_id}: {exc}")
                 break
@@ -55,21 +69,22 @@ class YouTube:
                 break
         return out
 
-    def search(self, query: str, channel_id: str | None = None, after=None, max_age_days: int = 30) -> list[dict]:
+    def search(self, query: str, channel_id: str | None = None, after=None, max_age_days: int = 30,
+               max_results: int = 5) -> list[dict]:
         """Cached search (100 units). Used only where uploads lists can't cover it."""
         if not self.key:
             return []
-        key = f"{query}|{channel_id}"
+        key = f"{query}|{channel_id}" + (f"|{max_results}" if max_results != 5 else "")
         hit = self.cache["search"].get(key)
         if hit and common.within(common.parse_time(hit["at"]), max_age_days * 24):
             return hit["items"]
-        params = {"part": "snippet", "q": query, "type": "video", "maxResults": 5, "key": self.key, "videoEmbeddable": "true"}
+        params = {"part": "snippet", "q": query, "type": "video", "maxResults": max_results, "key": self.key, "videoEmbeddable": "true"}
         if channel_id:
             params["channelId"] = channel_id
         if after:
             params["publishedAfter"] = common.iso(after)
         try:
-            data = common.get(f"{API}/search", params=params)
+            data = self.get("search", params)
         except common.FetchError as exc:
             common.log(f"youtube search: {exc}")
             return []

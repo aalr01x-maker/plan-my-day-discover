@@ -120,7 +120,7 @@ const ABOUT = {
   news: "Stories are grouped across BBC, Reuters, AP, Al Jazeera, DW, France 24 and CNBC, then ranked by how many independent outlets confirm them (35%), significance (30%), recency (20%) and source reliability (15%). Duplicates are merged into one story.",
   movies: "Ranked from IMDb ratings (TMDB only where IMDb has none) and popularity. Ratings are weighted by number of votes, so a title with a few votes can't top the list; each ranking mixes quality and popularity differently.",
   gaming: "Ranked from Metacritic critic scores and Steam user reviews (weighted by how many people reviewed), plus popularity. Player and review counts are Steam's own; games not on Steam show the critic score only, as Sony and Nintendo publish no player numbers.",
-  music: "Ranked from real listening data (Last.fm's all-time listeners and plays, from millions of users) and how strongly MusicBrainz tags each song with the genre. Songs have no public quality ratings, so only measurable signals count.",
+  music: "Ranked by real listening: YouTube views of the official upload (artist channel, VEVO or Topic), plus how strongly MusicBrainz tags each song with the genre. Songs have no public quality ratings, so only measurable signals count.",
   sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
 };
 function heading(section, crumbs) {
@@ -351,9 +351,9 @@ async function music(parts) {
   $("filters").innerHTML = "";
   const g = data.genres[genre];
   heading("music", [g?.name, label(RANKINGS, ranking)]);
-  note(`${g?.name || ""}: ` + ({ all_time: "Best of All Time: Last.fm listeners, all time (85%), and how strongly the song is tagged with this genre (15%).",
-    recent: "Best Recent: released in the last 12 months; listeners 75% + genre fit 25%.",
-    trending: "Trending: the most recent listening momentum (70%) + listeners (30%)." }[ranking]) +
+  note(`${g?.name || ""}: ` + ({ all_time: "Best of All Time: YouTube views of the official video, all time (85%), and how strongly the song is tagged with this genre (15%).",
+    recent: "Best Recent: released in the last 12 months; YouTube views 75% + genre fit 25%.",
+    trending: "Trending: YouTube views gained this week, or views per week for songs under 2 years old (70%), + total views (30%)." }[ranking]) +
     (g?.notes?.[ranking] ? " " + g.notes[ranking] : ""));
   paint(g?.[ranking] || [], songCard, songDetail, "No songs here yet.");
   return ["music", genre, ranking];
@@ -362,16 +362,16 @@ function songCard(s) {
   return `<article class="card" tabindex="0" data-item="${esc(s.id)}"><div class="media-row">${img(s.artwork, "thumb square", "")}
     <div><h3 class="title"><span class="rank">#${s.rank}</span>${esc(s.title)}</h3>
     <div class="meta">${esc(s.artist)}${s.released ? " · " + esc(s.released.slice(0, 4)) : ""}</div>
-    <div class="scores"><span class="score"><b>${num(s.metrics.listeners)}</b> ${esc(s.metrics.source)} listeners</span></div></div></div>
+    <div class="scores"><span class="score"><b>${num(s.metrics.views)}</b> ${esc(s.metrics.source)} views</span></div></div></div>
     <div class="body">${s.preview ? `<audio controls preload="none" src="${esc(s.preview)}"></audio>` : ""}${why(s.why)}</div></article>`;
 }
 function songDetail(s) {
   return `<div class="detail"><h2 id="sheetTitle">${esc(s.title)}</h2>
     <div class="split">${img(s.artwork, "", s.title)}<div>
     <div class="meta">${esc(s.artist)}${s.album ? " · " + esc(s.album) : ""}${s.released ? " · Released " + kuwait(s.released, false) : ""}</div>
-    <div class="scores"><span class="score"><b>${num(s.metrics.listeners)}</b> listeners</span><span class="score"><b>${num(s.metrics.listens)}</b> plays</span>
+    <div class="scores"><span class="score"><b>${num(s.metrics.views)}</b> views</span>
     <span class="score">genre fit ${Math.round(s.metrics.genre_fit * 100)}%</span></div>
-    <p class="meta">Listeners and plays: ${esc(s.metrics.source)}, all time.</p></div></div>
+    <p class="meta">Views: ${esc(s.metrics.source)}, official upload${s.metrics.channel ? " on " + esc(s.metrics.channel) : ""}, all time.</p></div></div>
     ${s.preview ? `<h3>Preview</h3><audio controls preload="none" src="${esc(s.preview)}"></audio>` : ""}
     ${videoBlock(s.video)}
     <h3>Why it ranks here</h3><p>${esc(s.why)}</p>${linksBlock(s.links)}</div>`;

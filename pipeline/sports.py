@@ -11,6 +11,7 @@ Overwatch League -> OWCS, LCS -> LTA).
 from __future__ import annotations
 
 import math
+from datetime import timedelta
 import re
 import time
 
@@ -103,7 +104,11 @@ LEAGUE_NEWS = {
 # extra YouTube searches for leagues whose generic "<league> highlights" search finds little
 HIGHLIGHT_QUERIES = {"NPB": ["Japan Series highlights", "NPB highlights"],
                      "Pool": ["Mosconi Cup highlights", "World Pool Championship highlights", "UK Open Pool highlights"],
-                     "UFL": ["UFL football highlights"], "Overwatch": ["OWCS highlights"]}
+                     "UFL": ["UFL football highlights"], "Overwatch": ["OWCS highlights", "Overwatch Champions Series highlights"],
+                     "BBL": ["Big Bash League highlights", "BBL highlights cricket"],
+                     "KBO": ["KBO highlights", "KBO League highlights"],
+                     "IIHF": ["IIHF World Championship highlights", "IIHF highlights"],
+                     "World titles": ["world title fight highlights boxing", "boxing world championship full highlights"]}
 # League news only from established sports outlets (Google News search can otherwise return small blogs)
 REPUTABLE = {
     "_all": ["espn.com", "espn.co.uk", "bbc.co.uk", "bbc.com", "skysports.com", "nytimes.com", "reuters.com", "apnews.com",
@@ -257,8 +262,7 @@ def _big_channels(yt: YouTube, videos: list[dict]) -> list[dict]:
     todo = sorted({v["channel_id"] for v in videos if v.get("channel_id") and v["channel_id"] not in cache})
     for i in range(0, len(todo), 50):
         try:
-            data = common.get("https://www.googleapis.com/youtube/v3/channels",
-                              params={"part": "statistics", "id": ",".join(todo[i:i + 50]), "key": yt.key})
+            data = yt.get("channels", {"part": "statistics", "id": ",".join(todo[i:i + 50])})
             yt.units += 1
         except common.FetchError as exc:
             common.log(f"youtube channels: {exc}")
@@ -275,8 +279,7 @@ def _channel_ids(yt: YouTube, handles: list[str]) -> dict[str, str]:
     for h in handles:
         if h not in cache:
             try:
-                data = common.get("https://www.googleapis.com/youtube/v3/channels",
-                                  params={"part": "id", "forHandle": h, "key": yt.key})
+                data = yt.get("channels", {"part": "id", "forHandle": h})
                 yt.units += 1
                 cache[h] = (data.get("items") or [{}])[0].get("id")
             except common.FetchError as exc:
@@ -291,8 +294,7 @@ def _views(yt: YouTube, ids: list[str]) -> dict[str, int]:
     views = {}
     for i in range(0, len(ids), 50):
         try:
-            data = common.get("https://www.googleapis.com/youtube/v3/videos",
-                              params={"part": "statistics", "id": ",".join(ids[i:i + 50]), "key": yt.key})
+            data = yt.get("videos", {"part": "statistics", "id": ",".join(ids[i:i + 50])})
             yt.units += 1
         except common.FetchError as exc:
             common.log(f"youtube stats: {exc}")
@@ -390,13 +392,13 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                     hl, hl_old = [hl_card(v) for v in older], "older"
                 elif yt and yt.available:
                     found = []
-                    for q in [f"{LEAGUE_NEWS.get(sport_id, {}).get(league, league)} highlights"] + HIGHLIGHT_QUERIES.get(league, []):
-                        # search results are dated on the card; up to 6 months back for leagues between seasons
-                        found = [v for v in yt.search(q, max_age_days=1)
-                                 if common.within(common.parse_time(v.get("published")), 180 * 24, now)]
+                    for q in HIGHLIGHT_QUERIES.get(league, []) + [f"{LEAGUE_NEWS.get(sport_id, {}).get(league, league)} highlights"]:
+                        # search results are dated on the card; up to a year back for leagues between seasons
+                        found = _big_channels(yt, [v for v in yt.search(q, after=now - timedelta(days=365), max_age_days=1,
+                                                                        max_results=10)
+                                                   if HIGHLIGHT.search(v["title"])])
                         if found:
                             break
-                    found = _big_channels(yt, found)
                     more = _views(yt, [v["id"] for v in found])
                     views.update(more)
                     hl = [hl_card({**v, "league": league}, f"{more.get(v['id'], 0):,} views; found by YouTube search, "

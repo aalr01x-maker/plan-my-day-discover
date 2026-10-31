@@ -16,7 +16,7 @@ from .ai import AI
 from .youtube import YouTube
 
 LAST = common.STATE / "last"
-ORDER = ["news", "movies", "games", "music", "sports"]
+ORDER = ["news", "movies", "games", "sports", "music"]  # sports first: its few YouTube searches must not wait on music's daily budget
 
 
 def _count(data: dict, section: str) -> int:
