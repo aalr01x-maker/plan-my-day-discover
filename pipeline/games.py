@@ -26,11 +26,11 @@ of the game on Steam (SteamSpy tag lists alone are too loose: any game tagged
 """
 from __future__ import annotations
 
+import json
 import re
 import time
 from datetime import datetime, timedelta
 
-import requests
 
 from . import common
 from .youtube import YouTube, best_match, embed
@@ -120,26 +120,26 @@ _STEAM_REVIEWS = {"blocked": False, "used": 0}
 
 
 def _steam_reviews(appid: str) -> tuple[int, int] | None:
-    """Positive/negative review totals from Steam's own review endpoint. SteamSpy no longer counts
-    reviews for new games (they show 0), so this fills them in. Stops for the run if Steam refuses."""
+    """Positive/negative review totals from Steam's official store API (IStoreBrowseService, no key).
+    SteamSpy no longer counts reviews for new games (they show 0), so this fills them in."""
     if _STEAM_REVIEWS["blocked"]:
         return None
-    status, q = "error", None
+    payload = json.dumps({"ids": [{"appid": int(appid)}], "context": {"language": "english", "country_code": "US"},
+                          "data_request": {"include_reviews": True}})
     try:
-        r = requests.get(f"{STORE.rsplit('/api', 1)[0]}/appreviews/{appid}",
-                         params={"json": 1, "language": "all", "purchase_type": "all", "num_per_page": 0, "filter": "summary"},
-                         headers=common.UA, timeout=20, allow_redirects=False)
-        status = r.status_code
-        q = r.json().get("query_summary") if r.status_code == 200 else None
-    except (requests.RequestException, ValueError):
-        pass
-    if not q:
+        data = common.get("https://api.steampowered.com/IStoreBrowseService/GetItems/v1/", params={"input_json": payload})
+        items = (data.get("response") or {}).get("store_items") or []
+        summary = ((items[0].get("reviews") or {}).get("summary_filtered") or {}) if items else {}
+    except (common.FetchError, ValueError, AttributeError) as exc:
         _STEAM_REVIEWS["blocked"] = True
-        common.log(f"games: Steam review counts unavailable (HTTP {status}); new games keep SteamSpy's")
+        common.log(f"games: Steam review counts unavailable ({exc}); new games keep SteamSpy's")
+        return None
+    n = int(summary.get("review_count") or 0)
+    if not n:
         return None
     _STEAM_REVIEWS["used"] += 1
-    time.sleep(0.4)
-    return int(q.get("total_positive") or 0), int(q.get("total_negative") or 0)
+    positive = round(n * int(summary.get("percent_positive") or 0) / 100)
+    return positive, n - positive
 
 
 def _tags(appid: str, cache: dict, budget: list[int]) -> list[str] | None:
