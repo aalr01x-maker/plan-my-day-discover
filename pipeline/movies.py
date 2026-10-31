@@ -46,8 +46,8 @@ TABS = {
     "adult-animation": ("Adult Animation", {"with_genres": "16", "with_keywords": "kw:adult animation"},
                         {"with_genres": "16", "with_keywords": "kw:adult animation", "without_original_language": "ja"}),
 }
-MIN_VOTES = {"movie": {"all_time": 1500, "recent": 80, "trending": 50},
-             "tv": {"all_time": 300, "recent": 30, "trending": 20}}
+MIN_VOTES = {"movie": {"all_time": 1500, "recent": 40, "trending": 50},
+             "tv": {"all_time": 300, "recent": 15, "trending": 20}}
 BAYES_M = {"movie": 2000, "tv": 500}
 LIMIT = {"movie": 20, "tv": 20}
 WEIGHTS = {"all_time": 0.85, "recent": 0.75, "trending": 0.30}

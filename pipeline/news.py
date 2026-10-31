@@ -182,8 +182,9 @@ AI_SYSTEM = (
     "(local, human-interest, entertainment, sport); is_update: true if it is a new development of an ongoing story; "
     "disputed: a short note if the snippets present claims as unverified or contested, else empty string; story: a "
     "3-6 word lowercase label of the underlying story, IDENTICAL for events in this batch that are the same story "
-    "(e.g. 'spain train crash minister'); business: true if the event is primarily about business, the economy, "
-    "markets, trade, companies or finance, else false."
+    "(e.g. 'spain train crash minister'); business: true only if the main angle is business, the economy, "
+    "markets, trade, companies or finance (wars, arms sales, diplomacy and politics are false unless the story is "
+    "about their economic or market effect). Keep each summary under 45 words."
 )
 AI_SCHEMA = {
     "type": "object",
@@ -205,17 +206,17 @@ SIGNIFICANCE = {"major": 1.0, "notable": 0.6, "minor": 0.15}
 
 
 def _ai_enrich(events: list[dict], ai) -> None:
-    """Summaries + classification for candidate events, 15 per call, cached by event content."""
+    """Summaries + classification for candidate events, 10 per call, cached by event content."""
     todo = [ev for ev in events if ev.get("candidate")]
-    for i in range(0, len(todo), 15):
-        batch = todo[i : i + 15]
+    for i in range(0, len(todo), 10):
+        batch = todo[i : i + 10]
         lines = []
         for ev in batch:
             arts = sorted(ev["articles"], key=lambda a: -TIER.get(a["source"], 0.5))[:4]
             snippets = " || ".join(f"[{a['source']}] {a['title']}: {a['summary'][:260]}" for a in arts)
             lines.append(f"id={ev['id']} :: {snippets}")
         key = "news:" + common.fingerprint(*lines)
-        result = ai.json_call(key, AI_SYSTEM, "\n".join(lines), AI_SCHEMA, max_tokens=3000) if ai else None
+        result = ai.json_call(key, AI_SYSTEM, "\n".join(lines), AI_SCHEMA, max_tokens=5000) if ai else None
         for row in (result or {}).get("events", []):
             ev = next((e for e in batch if e["id"] == row["id"]), None)
             if ev:
