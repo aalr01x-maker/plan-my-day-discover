@@ -1,0 +1,16 @@
+{
+  "hosting": {
+    "site": "plan-my-day-discover",
+    "public": "site",
+    "ignore": ["**/.*", "**/*.tmp"],
+    "headers": [
+      { "source": "data/**", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "**/*.@(js|css|html)", "headers": [{ "key": "Cache-Control", "value": "no-cache" }] },
+      { "source": "**", "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "Content-Security-Policy", "value": "default-src 'self'; img-src 'self' data: https:; media-src https:; frame-src https://www.youtube-nocookie.com; script-src 'self'; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'" }
+      ] }
+    ]
+  }
+}

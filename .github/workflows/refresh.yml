@@ -1,0 +1,94 @@
+name: Daily refresh
+
+on:
+  schedule:
+    - cron: "0 9 * * *"        # 09:00 UTC = 12:00 PM Kuwait (UTC+3, no daylight saving)
+  workflow_dispatch:
+    inputs:
+      sections:
+        description: "Sections to refresh (blank = all): news movies games music sports"
+        required: false
+        default: ""
+
+permissions:
+  contents: write              # push the state branch (caches, history, last valid data)
+
+concurrency:
+  group: refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore state (caches, history, last valid datasets)
+        run: |
+          if git ls-remote --exit-code --heads origin state >/dev/null 2>&1; then
+            git fetch --depth 1 origin state
+            mkdir -p state
+            git archive FETCH_HEAD | tar -x -C state
+          else
+            echo "No state branch yet (first run)"
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Build datasets
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TMDB_TOKEN: ${{ secrets.TMDB_TOKEN }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          RAWG_API_KEY: ${{ secrets.RAWG_API_KEY }}
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+        run: python -m pipeline ${{ github.event.inputs.sections }}
+
+      - name: Save state branch
+        if: always()
+        run: |
+          [ -d state ] || exit 0
+          cd state
+          git init -q -b state
+          git config user.name "discover-bot"
+          git config user.email "discover-bot@users.noreply.github.com"
+          git add -A
+          git commit -q -m "state $(date -u +%FT%TZ)"
+          git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" state:state
+
+      - name: Deploy to Firebase Hosting (discovery site only)
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          # firebase.json pins hosting to site "plan-my-day-discover"; nothing else is deployed
+          npx --yes firebase-tools@14 deploy --only hosting --project plan-my-day-4ba6b --non-interactive \
+            -m "daily refresh ${{ github.run_id }}"
+          rm -f "$RUNNER_TEMP/sa.json"
+
+      - name: Run summary
+        if: always()
+        run: |
+          python - <<'PY'
+          import json, os
+          try:
+              meta = json.load(open("state/last/meta.json"))
+          except Exception as e:
+              meta = {"error": str(e)}
+          lines = ["| Section | OK | Updated | Items | Error |", "|---|---|---|---|---|"]
+          for s, m in (meta.get("sections") or {}).items():
+              lines.append(f"| {s} | {'✅' if m.get('ok') else '❌'} | {m.get('updated_at')} | {m.get('items')} | {m.get('error') or ''} |")
+          ai = (meta.get("run") or {}).get("ai") or {}
+          lines.append(f"\nAI: {ai.get('spent_usd')} of {ai.get('cap_usd')} USD this month; active={ai.get('active')} {ai.get('note') or ''}")
+          open(os.environ["GITHUB_STEP_SUMMARY"], "a").write("\n".join(lines) + "\n")
+          PY

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Plan My Day Discover</title>
+<meta name="description" content="Daily top news, movies & TV, games, music and sports, refreshed every day at 12:00 Kuwait time.">
+<meta name="theme-color" content="#0e1116">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%AD%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="bar">
+    <a class="brand" href="#/news">🧭 Discover</a>
+    <span id="updated" class="updated" aria-live="polite"></span>
+    <button id="searchBtn" class="icon" aria-label="Search" title="Search">🔍</button>
+    <button id="themeBtn" class="icon" aria-label="Switch light or dark theme" title="Theme">🌓</button>
+  </div>
+  <nav class="sections" aria-label="Sections" id="sections"></nav>
+</header>
+<div id="searchWrap" class="searchwrap" hidden>
+  <input id="search" type="search" placeholder="Search this list… (Enter searches every section)" aria-label="Search">
+</div>
+<div id="stale" class="stale" hidden role="status"></div>
+<main id="main" tabindex="-1">
+  <div id="tabs" class="tabs" role="tablist"></div>
+  <div id="subtabs" class="subtabs"></div>
+  <div id="filters" class="filters"></div>
+  <div id="note" class="note" hidden></div>
+  <div id="content" class="grid" aria-live="polite"></div>
+</main>
+<div id="sheet" class="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="sheet-inner">
+    <button id="sheetClose" class="close" aria-label="Close">✕</button>
+    <div id="sheetBody"></div>
+  </div>
+</div>
+<footer class="foot">
+  Refreshed daily at 12:00 Kuwait time from public sources (BBC, Reuters, AP, Al Jazeera, DW, France 24, CNBC, ESPN, HLTV,
+  TMDB, Steam, SteamSpy, RAWG, ListenBrainz, MusicBrainz, iTunes, Last.fm, YouTube). Scores and facts come from those sources;
+  AI only writes short summaries of the linked articles. This product uses the TMDB API but is not endorsed or certified by TMDB.
+</footer>
+<script src="app.js"></script>
+</body>
+</html>
