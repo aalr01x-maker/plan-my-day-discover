@@ -204,6 +204,7 @@ NOT_OFFICIAL = re.compile(r"\b(cover|karaoke|reaction|tutorial|lesson|instrument
 
 SKIP_VERSION = re.compile(r"\b(live|remix|edit|teaser|trailer|behind the scenes|interview|making of|snippet|visualiser|visualizer)\b", re.I)
 CHANNELS_PER_RUN = 500    # artist channels read per day (1-4 quota units each)
+YOUTUBE_CEILING = 7000     # music stops new lookups once the run has used this many of the 10,000 daily units (YouTube sells no extra quota)
 
 
 def _artist_channel(yt: YouTube, url: str, cache: dict) -> str | None:
@@ -261,7 +262,7 @@ def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int
     then a YouTube search (100 units) only if that finds nothing."""
     candidates = []
     url = song.get("artist_youtube")
-    if url and channel_budget[0] > 0:
+    if url and channel_budget[0] > 0 and yt.units < YOUTUBE_CEILING:
         cid = _artist_channel(yt, url, state.setdefault("yt_channel_ids", {}))
         if cid:
             uploads = state.setdefault("yt_uploads", {})
@@ -276,7 +277,7 @@ def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int
                                                   "published": v.get("published")} for v in vids]}
             candidates = _match(song, hit["videos"])
     if not candidates:
-        if search_budget[0] <= 0 or yt.exhausted:
+        if search_budget[0] <= 0 or yt.exhausted or yt.units >= YOUTUBE_CEILING:
             return "later"
         search_budget[0] -= 1
         found = yt.search(f"{song['artist']} {song['title']}", max_age_days=36500)
