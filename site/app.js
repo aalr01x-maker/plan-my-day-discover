@@ -10,7 +10,7 @@ const SECTIONS = [
   { id: "sports", icon: "🏆", name: "Sports", file: "sports" },
 ];
 const RANKINGS = [["all_time", "Best of All Time"], ["recent", "Best Recent"], ["trending", "Trending"]];
-const NEWS_PERIODS = [["today", "Top 3 Today"], ["week", "Top 3 This Week"]];
+const NEWS_PERIODS = [["today", "Top 3 Today"], ["week", "Top 3 This Week"], ["month", "Top 3 This Month"]];
 const SPORT_VIEWS = [["highlights", "Top Highlights"], ["results", "Major Results & Events"], ["latest", "Latest (24h)"]];
 const MEDIA = [["movie", "Movies"], ["tv", "TV Shows"]];
 const STALE_HOURS = 30;
@@ -118,9 +118,9 @@ function note(text, label = "Ranked by") {
 /* Centered section header + what the whole section is ranked by */
 const ABOUT = {
   news: "Stories are grouped across BBC, Reuters, AP, Al Jazeera, DW, France 24 and CNBC, then ranked by how many independent outlets confirm them (35%), significance (30%), recency (20%) and source reliability (15%). Duplicates are merged into one story.",
-  movies: "Ranked from TMDB ratings and popularity. Ratings are weighted by number of votes, so a title with a few votes can't top the list; each ranking mixes quality and popularity differently.",
-  gaming: "Ranked from critic scores (Metacritic) and user ratings (Steam reviews or RAWG), weighted by how many people rated, plus popularity. Critic and user scores are always shown separately.",
-  music: "Ranked from real listening data (ListenBrainz listeners and plays) and how strongly MusicBrainz tags each song with the genre. Songs have no public quality ratings, so only measurable signals count.",
+  movies: "Ranked from IMDb ratings (TMDB only where IMDb has none) and popularity. Ratings are weighted by number of votes, so a title with a few votes can't top the list; each ranking mixes quality and popularity differently.",
+  gaming: "Ranked from Metacritic critic scores and Steam user reviews (weighted by how many people reviewed), plus popularity. Player and review counts are Steam's own; games not on Steam show the critic score only, as Sony and Nintendo publish no player numbers.",
+  music: "Ranked from real listening data (Last.fm's all-time listeners and plays, from millions of users) and how strongly MusicBrainz tags each song with the genre. Songs have no public quality ratings, so only measurable signals count.",
   sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
 };
 function heading(section, crumbs) {
@@ -203,14 +203,15 @@ async function news(parts, q) {
   const data = await load("news");
   const tabs = Object.entries(data.regions).map(([id, r]) => [id, r.name]);
   const tab = data.regions[parts[1]] ? parts[1] : "world";
-  const period = parts[2] === "week" ? "week" : "today";
+  const period = ["week", "month"].includes(parts[2]) ? parts[2] : "today";
   tabsRow($("tabs"), tabs, tab, (id) => go(["news", id, period], null));
   segGroups([{ label: "Period", items: NEWS_PERIODS, selected: period, onPick: (id) => go(["news", tab, id], null) }]);
   $("filters").innerHTML = "";
   heading("news", [data.regions[tab].name, label(NEWS_PERIODS, period)]);
-  note(`${data.regions[tab].name} stories from the ${period === "today" ? "last 24 hours" : "last 7 days"}` +
+  note(`${data.regions[tab].name} stories from the ${{ today: "last 24 hours", week: "last 7 days", month: "last 30 days" }[period]}` +
     (tab === "business" ? " about business, the economy, markets and companies" : tab === "world" ? " from every region" : "") +
-    `, ranked by outlets confirming it, significance, recency and source reliability. ` +
+    (period === "month" ? ", ranked by how many outlets covered it (40%), significance (35%), source reliability (15%) and recency (10%). " :
+      `, ranked by outlets confirming it, significance, recency and source reliability. `) +
     `${num(data.article_count)} articles from ${data.outlets.length} outlets were compared today.`);
   paint(data.regions[tab][period], newsCard, newsDetail, "No major stories in this window yet.");
   return [`news`, tab, period];
@@ -220,7 +221,7 @@ function newsCard(s) {
     <div class="body"><h3 class="title">${esc(s.headline)}</h3>
     <div class="meta">${esc(s.country || "")}${s.country ? " · " : ""}${ago(s.updated)} · ${new Set(s.sources.map((x) => x.name)).size} outlet${new Set(s.sources.map((x) => x.name)).size === 1 ? "" : "s"}</div>
     <div class="badges">${s.significance ? `<span class="badge ${s.significance === "major" ? "major" : ""}">${esc(s.significance)}</span>` : ""}
-    ${s.video ? '<span class="badge">▶ video</span>' : ""}${s.disputed ? '<span class="badge warn">disputed claims</span>' : ""}</div>
+    ${s.older ? '<span class="badge warn">older than 24 h</span>' : ""}${s.video ? '<span class="badge">▶ video</span>' : ""}${s.disputed ? '<span class="badge warn">disputed claims</span>' : ""}</div>
     <p class="summary">${esc(s.summary)}</p>${why(s.why)}</div></article>`;
 }
 function newsDetail(s) {
@@ -251,19 +252,21 @@ async function movies(parts) {
   $("filters").innerHTML = "";
   heading("movies", [label(MEDIA, media), genre && set[genre].name, label(RANKINGS, ranking)]);
   note(`${genre ? set[genre].name + " " : ""}${media === "tv" ? "TV shows" : "movies"}: ` + { all_time: "Best of All Time: 85% rating quality (weighted by vote count) + 15% popularity.",
-    recent: media === "tv" ? "Best Recent: shows with episodes aired in the last 12 months (new seasons count); 75% quality + 25% popularity."
-      : "Best Recent: released in the last 12 months; 75% quality + 25% popularity.",
+    recent: media === "tv" ? "Best Recent: shows with episodes aired in the last 12 months (new seasons count), rated 7.5+; 75% quality + 25% popularity."
+      : "Best Recent: released in the last 12 months, rated 7.5+; 75% quality + 25% popularity.",
     trending: "Trending: last 7 days on TMDB; 70% popularity + 30% quality." }[ranking] +
+    (genre && set[genre].notes?.[ranking] ? " " + set[genre].notes[ranking] : "") +
     ` Streaming shown for ${data.watch_region === "KW" ? "Kuwait" : data.watch_region} where listed.`);
   paint(genre ? set[genre][ranking] : [], movieCard, movieDetail, "No titles here yet.");
   return ["movies", media, genre, ranking];
 }
+const ratingOf = (m) => m.rating.value ?? m.rating.tmdb ?? 0;
 function movieCard(m) {
   const stream = m.watch?.stream?.length ? `Stream: ${m.watch.stream.slice(0, 2).join(", ")}${m.watch.region !== "KW" ? " (US)" : ""}` : "";
   return `<article class="card" tabindex="0" data-item="${esc(m.id)}"><div class="media-row">${img(m.poster, "thumb poster", "")}
     <div><h3 class="title"><span class="rank">#${m.rank}</span>${esc(m.title)}</h3>
     <div class="meta">${esc(m.year)} · ${esc((m.genres || []).slice(0, 3).join(", "))}</div>
-    <div class="scores"><span class="score">TMDB <b>${m.rating.tmdb.toFixed(1)}</b>/10 · ${num(m.rating.votes)} votes</span></div>
+    <div class="scores"><span class="score">${esc(m.rating.source)} <b>${ratingOf(m).toFixed(1)}</b>/10 · ${num(m.rating.votes)} votes</span></div>
     ${stream ? `<div class="meta">${esc(stream)}</div>` : ""}</div></div>
     <div class="body"><p class="summary">${esc(m.overview)}</p>${why(m.why)}</div></article>`;
 }
@@ -272,18 +275,20 @@ function movieDetail(m) {
   const region = w.region === "KW" ? "Kuwait" : w.region === "US" ? "the US (not listed for Kuwait)" : null;
   return `<div class="detail"><h2 id="sheetTitle">${esc(m.title)} <span class="meta">(${esc(m.year)})</span></h2>
     <div class="split">${img(m.poster, "", m.title)}<div>
-    <div class="scores"><span class="score">TMDB <b>${m.rating.tmdb.toFixed(1)}</b>/10</span><span class="score">${num(m.rating.votes)} votes</span></div>
+    <div class="scores"><span class="score">${esc(m.rating.source)} <b>${ratingOf(m).toFixed(1)}</b>/10</span><span class="score">${num(m.rating.votes)} votes</span>
+    ${m.rating.source === "IMDb" && m.rating.tmdb ? `<span class="score">TMDB ${m.rating.tmdb.toFixed(1)}</span>` : ""}</div>
     <div class="meta">${esc((m.genres || []).join(", "))} · ${m.released ? "Released " + kuwait(m.released, false) : ""}
     ${m.seasons_count ? ` · ${m.seasons_count} season${m.seasons_count > 1 ? "s" : ""} · ${esc(m.status || "")}` : ""}</div>
     <p>${esc(m.overview)}</p></div></div>
     ${videoBlock(m.trailer)}
     <h3>Where to watch</h3>${region ? `<p>In ${region}: ${w.stream.length ? "Stream on " + esc(w.stream.join(", ")) : "no streaming listed"}${w.rent.length ? "; rent on " + esc(w.rent.join(", ")) : ""}${w.buy.length ? "; buy on " + esc(w.buy.join(", ")) : ""}.
       ${w.link ? `<a href="${esc(w.link)}" target="_blank" rel="noopener">All options</a>` : ""}</p>` : "<p>No streaming information listed.</p>"}
-    ${m.seasons?.length ? `<h3>Season ratings</h3><table class="mini"><tr><th>Season</th><th>Avg episode rating</th><th>Rated episodes</th></tr>
+    ${m.seasons?.length ? `<h3>Season ratings${m.ratings_source ? " (" + esc(m.ratings_source) + ")" : ""}</h3><table class="mini"><tr><th>Season</th><th>Avg episode rating</th><th>Rated episodes</th></tr>
       ${m.seasons.map((s) => `<tr><td>${s.season} ${s.year ? `(${esc(s.year)})` : ""}</td><td>${s.rating.toFixed(1)}</td><td>${s.rated_episodes}</td></tr>`).join("")}</table>` : ""}
-    ${m.top_episodes?.length ? `<h3>Highest-rated episodes</h3><ul>${m.top_episodes.map((e) => `<li>S${e.season}E${e.episode} “${esc(e.name)}” – ${e.rating.toFixed(1)} (${num(e.votes)} votes)</li>`).join("")}</ul>` : ""}
+    ${m.top_episodes?.length ? `<h3>Highest-rated episodes${m.ratings_source ? " (" + esc(m.ratings_source) + ")" : ""}</h3><ul>${m.top_episodes.map((e) =>
+      `<li>S${e.season}E${e.episode} ${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">“${esc(e.name)}”</a>` : `“${esc(e.name)}”`} – ${Number(e.rating).toFixed(1)} (${num(e.votes)} votes)</li>`).join("")}</ul>` : ""}
     <h3>Why it ranks here</h3><p>${esc(m.why)}</p>${linksBlock(m.links)}
-    <p class="meta">Ratings and streaming data: TMDB / JustWatch.</p></div>`;
+    <p class="meta">Ratings: ${m.rating.source === "IMDb" ? "IMDb (official daily data)" : "TMDB"}. Details and streaming: TMDB / JustWatch.</p></div>`;
 }
 
 /* ---------- Gaming ---------- */
@@ -310,10 +315,12 @@ async function gaming(parts, q) {
 }
 const flagQ = (flags) => { const q = new URLSearchParams(); if (flags.length) q.set("f", flags.join(",")); return q; };
 function scoreBadges(x) {
-  return `<div class="scores">${x.critic ? `<span class="score">Critic <b>${x.critic.score}</b></span>` : `<span class="score">Critic –</span>`}
-    ${x.user.score != null ? `<span class="score">Users <b>${Math.round(x.user.score)}%</b> · ${num(x.user.reviews)}</span>` : `<span class="score">Users –</span>`}
-    ${!x.critic && x.user.score == null ? '<span class="badge">no scores yet</span>'
-      : `<span class="badge ${x.user.confidence === "high" ? "good" : x.user.confidence === "low" ? "warn" : ""}">${esc(x.user.confidence)} confidence</span>`}</div>`;
+  const u = x.user;
+  return `<div class="scores">${x.critic ? `<span class="score">Critic <b>${x.critic.score}</b> <span class="meta">Metacritic</span></span>` : `<span class="score">Critic –</span>`}
+    ${u && u.score != null ? `<span class="score">Steam reviews <b>${Math.round(u.score)}%</b> · ${num(u.reviews)}</span>` : ""}
+    ${x.players_now != null ? `<span class="score">Playing now <b>${num(x.players_now)}</b> <span class="meta">Steam</span></span>` : ""}
+    ${!x.critic && !(u && u.score != null) ? '<span class="badge">no scores yet</span>'
+      : u ? `<span class="badge ${u.confidence === "high" ? "good" : u.confidence === "low" ? "warn" : ""}">${esc(u.confidence)} confidence</span>` : ""}</div>`;
 }
 function gameCard(x) {
   return `<article class="card" tabindex="0" data-item="${esc(x.id)}">${img(x.image, "thumb", "")}
@@ -328,7 +335,7 @@ function gameDetail(x) {
     ${videoBlock(x.video, x.trailer) || img(x.image, "hero")}
     <h3>Scores</h3>${scoreBadges(x)}
     <p class="meta">Critic: ${x.critic ? `Metacritic${x.critic.url ? ` (<a href="${esc(x.critic.url)}" target="_blank" rel="noopener">source</a>)` : ""}` : "no critic score published"}.
-    Users: ${esc(x.user.source)}${x.user.source === "Steam reviews" ? ", % positive" : ""}, weighted toward 70% when there are few ratings.</p>
+    ${x.user ? "Steam reviews: % positive, weighted toward 70% when there are few reviews. Playing now: Steam's official live count at the daily update." : "Not on Steam; PlayStation and Nintendo publish no player or review counts."}</p>
     ${x.genres?.length ? `<p class="meta">Steam genres: ${esc(x.genres.join(", "))}</p>` : ""}
     <h3>Why it ranks here</h3><p>${esc(x.why)}</p>${linksBlock(x.links)}</div>`;
 }
@@ -344,9 +351,9 @@ async function music(parts) {
   $("filters").innerHTML = "";
   const g = data.genres[genre];
   heading("music", [g?.name, label(RANKINGS, ranking)]);
-  note(`${g?.name || ""}: ` + ({ all_time: "Best of All Time: listeners (85%) and how strongly the song is tagged with this genre (15%).",
+  note(`${g?.name || ""}: ` + ({ all_time: "Best of All Time: Last.fm listeners, all time (85%), and how strongly the song is tagged with this genre (15%).",
     recent: "Best Recent: released in the last 12 months; listeners 75% + genre fit 25%.",
-    trending: "Trending: growth in listens over the last 7 days (70%) + listeners (30%)." }[ranking]) +
+    trending: "Trending: the most recent listening momentum (70%) + listeners (30%)." }[ranking]) +
     (g?.notes?.[ranking] ? " " + g.notes[ranking] : ""));
   paint(g?.[ranking] || [], songCard, songDetail, "No songs here yet.");
   return ["music", genre, ranking];
@@ -355,16 +362,16 @@ function songCard(s) {
   return `<article class="card" tabindex="0" data-item="${esc(s.id)}"><div class="media-row">${img(s.artwork, "thumb square", "")}
     <div><h3 class="title"><span class="rank">#${s.rank}</span>${esc(s.title)}</h3>
     <div class="meta">${esc(s.artist)}${s.released ? " · " + esc(s.released.slice(0, 4)) : ""}</div>
-    <div class="scores"><span class="score"><b>${num(s.metrics.listeners)}</b> listeners</span></div></div></div>
+    <div class="scores"><span class="score"><b>${num(s.metrics.listeners)}</b> ${esc(s.metrics.source)} listeners</span></div></div></div>
     <div class="body">${s.preview ? `<audio controls preload="none" src="${esc(s.preview)}"></audio>` : ""}${why(s.why)}</div></article>`;
 }
 function songDetail(s) {
   return `<div class="detail"><h2 id="sheetTitle">${esc(s.title)}</h2>
     <div class="split">${img(s.artwork, "", s.title)}<div>
     <div class="meta">${esc(s.artist)}${s.album ? " · " + esc(s.album) : ""}${s.released ? " · Released " + kuwait(s.released, false) : ""}</div>
-    <div class="scores"><span class="score"><b>${num(s.metrics.listeners)}</b> listeners</span><span class="score"><b>${num(s.metrics.listens)}</b> listens</span>
+    <div class="scores"><span class="score"><b>${num(s.metrics.listeners)}</b> listeners</span><span class="score"><b>${num(s.metrics.listens)}</b> plays</span>
     <span class="score">genre fit ${Math.round(s.metrics.genre_fit * 100)}%</span></div>
-    <p class="meta">Listener counts: ${esc(s.metrics.source)}.</p></div></div>
+    <p class="meta">Listeners and plays: ${esc(s.metrics.source)}, all time.</p></div></div>
     ${s.preview ? `<h3>Preview</h3><audio controls preload="none" src="${esc(s.preview)}"></audio>` : ""}
     ${videoBlock(s.video)}
     <h3>Why it ranks here</h3><p>${esc(s.why)}</p>${linksBlock(s.links)}</div>`;
@@ -382,18 +389,26 @@ async function sports(parts, q) {
   tabsRow($("tabs"), tabs, sport, (id) => go(["sports", id], null));
   segGroups([{ label: "View", items: SPORT_VIEWS, selected: view, onPick: (id) => go(["sports", sport, id], lq(league)) }]);
   chips([["", "All leagues"], ...s.leagues.map((l) => [l, l])], [league], (id) => go(["sports", sport, view], lq(id), true));
-  const list = s[view].filter((x) => !league || x.league === league);
+  const lb = league && s.by_league ? s.by_league[league] : null;
+  const list = lb ? lb[view] : s[view].filter((x) => !league || x.league === league);
+  const older = lb?.older?.[view];
+  const olderNote = !older ? "" : older === "search"
+    ? ` No official ${league} highlights recently, so these are the newest ${league} highlight videos on YouTube (the uploading channel is shown on each).`
+    : ` No ${league} ${view === "latest" ? "news in the last 24 hours" : view === "highlights" ? "highlights in the last 7 days" : "results in the last 7 days"}` +
+      ` (usually an off-season or a break between rounds), so this shows the most recent available, dated on each card.`;
   heading("sports", [s.name, league || "", label(SPORT_VIEWS, view)]);
   note(`${s.name}${league ? " · " + league : ""}: ` + { highlights: "Official highlight videos from league channels in the last 7 days, most watched first.",
     results: "The week's biggest results and events: results, titles, records and major incidents first, confirmed by more outlets.",
-    latest: "Newest reports from the last 24 hours." }[view] + (view === "highlights" && !s.highlights.length ? " Highlights appear once the YouTube connection is active." : ""));
+    latest: "Newest reports from the last 24 hours." }[view] + olderNote);
   paint(list, view === "highlights" ? highlightCard : sportCard, view === "highlights" ? highlightDetail : sportDetail,
-    league ? `Nothing for ${league} in this view right now.` : "Nothing in this view right now.");
+    league ? (view === "latest" ? `No ${league} news in the last 24 hours.`
+      : `No ${league} ${view === "highlights" ? "highlight videos" : "results or events"} in the last 7 days — usually because no ${league} matches were played this week.`)
+      : "Nothing in this view right now.");
   return ["sports", sport, view];
 }
 function highlightCard(v) {
   return `<article class="card" tabindex="0" data-item="${esc(v.youtube_id)}">${img(`https://i.ytimg.com/vi/${v.youtube_id}/hqdefault.jpg`, "thumb", "")}
-    <div class="body"><h3 class="title">${esc(v.title)}</h3><div class="meta">${esc(v.channel)} · ${ago(v.published)} · ${num(v.views)} views</div>
+    <div class="body"><h3 class="title">${esc(v.title)}</h3><div class="meta">${esc(v.channel)} · ${kuwait(v.published, false)} (${ago(v.published)}) · ${num(v.views)} views</div>
     ${v.league ? `<div class="badges"><span class="badge">${esc(v.league)}</span></div>` : ""}</div></article>`;
 }
 function highlightDetail(v) {
@@ -401,7 +416,7 @@ function highlightDetail(v) {
 }
 function sportCard(e) {
   return `<article class="card" tabindex="0" data-item="${esc(e.id)}">${img(e.image, "thumb", "")}
-    <div class="body"><h3 class="title">${esc(e.title)}</h3><div class="meta">${e.league ? esc(e.league) + " · " : ""}${ago(e.published)}</div>
+    <div class="body"><h3 class="title">${esc(e.title)}</h3><div class="meta">${e.league ? esc(e.league) + " · " : ""}${kuwait(e.published, false)} (${ago(e.published)}) · ${esc((e.sources[0] || {}).name || "")}</div>
     <p class="summary">${esc(e.summary)}</p>${why(e.why)}</div></article>`;
 }
 function sportDetail(e) {
@@ -422,7 +437,7 @@ async function search(parts, q) {
   const out = [];
   const add = (label, route, item, title) => out.push({ label, route, item, title });
   const [n, m, g, mu, sp] = await Promise.allSettled(SECTIONS.map((s) => load(s.file)));
-  if (n.value) for (const [rid, r] of Object.entries(n.value.regions)) for (const p of ["today", "week"]) for (const s of r[p]) if (hit(s)) add(`🌍 ${r.name}`, ["news", rid, p], s.id, s.headline);
+  if (n.value) for (const [rid, r] of Object.entries(n.value.regions)) for (const p of ["today", "week", "month"]) for (const s of r[p] || []) if (hit(s)) add(`🌍 ${r.name}`, ["news", rid, p], s.id, s.headline);
   if (m.value) for (const [media, set] of [["movie", m.value.movies], ["tv", m.value.tv]]) for (const [gid, gg] of Object.entries(set)) for (const [rk] of RANKINGS) for (const x of gg[rk]) if (hit(x.title)) add(`🎬 ${gg.name}`, ["movies", media, gid, rk], x.id, x.title);
   if (g.value) for (const [gid, gg] of Object.entries(g.value.genres)) for (const [rk] of RANKINGS) for (const x of gg[rk]) if (hit(x.title)) add(`🎮 ${gg.name}`, ["gaming", gid, rk], x.id, x.title);
   if (mu.value) for (const [gid, gg] of Object.entries(mu.value.genres)) for (const [rk] of RANKINGS) for (const x of gg[rk]) if (hit(x.title + " " + x.artist)) add(`🎵 ${gg.name}`, ["music", gid, rk], x.id, `${x.artist} – ${x.title}`);

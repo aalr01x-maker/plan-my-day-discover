@@ -8,9 +8,10 @@ Source: TMDB (TMDB_TOKEN, the v4 "API Read Access Token"). Rankings are never mi
                      (so new seasons of older shows count)
   Trending (7 days)  30% quality + 70% popularity (TMDB weekly trending + popularity)
 
-quality = Bayesian-weighted TMDB vote average (pulled toward the genre's mean when a
-title has few votes); popularity = vote count (all-time) or TMDB popularity (others),
-log scaled. Trailers are the official YouTube trailers TMDB lists; streaming shows
+quality = Bayesian-weighted IMDb rating (from IMDb's official daily datasets; TMDB's
+rating only when IMDb has none), pulled toward the list's mean when a title has few
+votes; popularity = vote count (all-time) or TMDB popularity (others), log scaled.
+Best Recent only includes titles rated 7.5+. Trailers are the official YouTube trailers TMDB lists; streaming shows
 Kuwait availability (JustWatch data via TMDB), else says it isn't listed for Kuwait.
 TV cards add season ratings and the highest-rated episodes when enough votes exist.
 """
@@ -19,6 +20,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from . import common
+from .imdb import IMDb
 
 API = "https://api.themoviedb.org/3"
 IMG = "https://image.tmdb.org/t/p/w342"
@@ -49,6 +51,14 @@ TABS = {
 MIN_VOTES = {"movie": {"all_time": 1500, "recent": 40, "trending": 50},
              "tv": {"all_time": 300, "recent": 15, "trending": 20}}
 BAYES_M = {"movie": 2000, "tv": 500}
+# the same rules on IMDb's scale (IMDb titles have many more votes)
+IMDB_MIN_VOTES = {"movie": {"all_time": 25000, "recent": 1000, "trending": 500},
+                  "tv": {"all_time": 5000, "recent": 300, "trending": 200}}
+IMDB_BAYES_M = {"movie": 25000, "tv": 5000}
+# Best Recent shows only titles rated 7.5+ (owner, 31 Oct 2026), on IMDb's scale when IMDb has
+# the title; a shorter list is fine.
+RECENT_MIN_RATING = {"movie": 7.5, "tv": 7.5}
+NO_RECENT = {"classic"}   # pre-1990 / pre-2000 by definition: no releases in the last 12 months
 LIMIT = {"movie": 20, "tv": 20}
 WEIGHTS = {"all_time": 0.85, "recent": 0.75, "trending": 0.30}
 
@@ -60,6 +70,8 @@ EPISODE_FIELDS = ("episode_number", "name", "vote_average", "vote_count", "air_d
 
 def _slim(path: str, data: dict) -> dict:
     """Keep only the fields the site uses (full TMDB responses carry cast/crew and are huge)."""
+    if path.endswith("/external_ids"):
+        return {"imdb_id": data.get("imdb_id")}
     if "/season/" in path:
         return {"episodes": [{k: e.get(k) for k in EPISODE_FIELDS} for e in data.get("episodes") or []]}
     if path.startswith(("/movie/", "/tv/")):
@@ -145,6 +157,47 @@ def _trailer(videos: dict) -> dict | None:
             "published": v.get("published_at"), "url": f"https://www.youtube.com/watch?v={v['key']}"}
 
 
+def _imdb_id(tmdb: TMDB, media: str, tid: int) -> str | None:
+    try:
+        return tmdb.get(f"/{media}/{tid}/external_ids", ttl_h=24 * 90).get("imdb_id")
+    except common.FetchError:
+        return None
+
+
+def _imdb_extras(tmdb: TMDB, show: dict, eps: list[dict]) -> dict | None:
+    """Season averages and best episodes from IMDb ratings; names from TMDB's season lists."""
+    if not eps:
+        return None
+    seasons = []
+    for n in sorted({e["season"] for e in eps if e["season"] > 0}):
+        rated = [e for e in eps if e["season"] == n and e["votes"] >= 50]
+        if len(rated) >= 2:
+            seasons.append({"season": n, "rating": round(sum(e["rating"] for e in rated) / len(rated), 2),
+                            "rated_episodes": len(rated), "year": ""})
+    pool = [e for e in eps if e["season"] > 0 and e["votes"] >= 100]
+    if not pool:
+        return {"seasons": seasons, "top_episodes": [], "ratings_source": "IMDb"} if seasons else None
+    mean = sum(e["rating"] for e in pool) / len(pool)
+    pool.sort(key=lambda e: (-common.bayes_rating(e["rating"], e["votes"], mean, 1000), -e["votes"]))
+    top = []
+    for e in pool[:5]:
+        name, aired = None, None
+        try:
+            season = tmdb.get(f"/tv/{show['id']}/season/{e['season']}", ttl_h=24 * 14)
+            match = next((x for x in season.get("episodes") or [] if x.get("episode_number") == e["episode"]), None)
+            if match:
+                name, aired = match.get("name"), match.get("air_date")
+        except common.FetchError:
+            pass
+        top.append({"season": e["season"], "episode": e["episode"], "name": name or f"Episode {e['episode']}",
+                    "rating": e["rating"], "votes": e["votes"], "aired": aired,
+                    "url": f"https://www.imdb.com/title/{e['tconst']}/"})
+    years = {s.get("season_number"): (s.get("air_date") or "")[:4] for s in show.get("seasons") or []}
+    for s in seasons:
+        s["year"] = years.get(s["season"], "")
+    return {"seasons": seasons, "top_episodes": top, "ratings_source": "IMDb"}
+
+
 def _tv_extras(tmdb: TMDB, show: dict) -> dict:
     """Season averages and highest-rated episodes, only from episodes with enough votes."""
     seasons, episodes = [], []
@@ -177,6 +230,8 @@ def build() -> dict:
     today = now.strftime("%Y-%m-%d")
     state = common.load_json(STATE, {"tmdb": {}})
     tmdb = TMDB(token, state["tmdb"])
+    imdb = IMDb()
+    tv_extras_todo = []   # (card, TMDB show details, IMDb id): filled after all tabs, one pass over IMDb's episode file
 
     trending = {m: [] for m in ("movie", "tv")}
     for media in trending:
@@ -198,9 +253,11 @@ def build() -> dict:
             date_to = "primary_release_date.lte" if media == "movie" else "air_date.lte"
             pools = {
                 "all_time": _discover(tmdb, media, {**base, "sort_by": "vote_average.desc",
-                                                   "vote_count.gte": MIN_VOTES[media]["all_time"]}, 3),
-                "recent": _discover(tmdb, media, {**base, date_from: year_ago, date_to: today, "sort_by": "popularity.desc",
-                                                 "vote_count.gte": MIN_VOTES[media]["recent"]}, 3),
+                                                   "vote_count.gte": MIN_VOTES[media]["all_time"]}, 4),
+                # TMDB pre-filter a point below the bar: IMDb and TMDB ratings differ, IMDb decides
+                "recent": [] if tab in NO_RECENT else _discover(tmdb, media, {
+                    **base, date_from: year_ago, date_to: today, "sort_by": "popularity.desc",
+                    "vote_count.gte": MIN_VOTES[media]["recent"], "vote_average.gte": RECENT_MIN_RATING[media] - 1.0}, 3),
                 "trending": _discover(tmdb, media, {**base, "sort_by": "popularity.desc",
                                                    "vote_count.gte": MIN_VOTES[media]["trending"]}, 2),
             }
@@ -216,19 +273,30 @@ def build() -> dict:
                     if t["id"] in seen or (t.get("vote_count") or 0) < MIN_VOTES[media][ranking]:
                         continue
                     seen.add(t["id"])
+                    if "_rating" not in t:
+                        t["_imdb"] = _imdb_id(tmdb, media, t["id"]) if imdb.available else None
+                        r = imdb.rating(t["_imdb"])
+                        t["_rating"], t["_votes"], t["_src"] = r + ("IMDb",) if r else \
+                            (t.get("vote_average") or 0, t.get("vote_count") or 0, "TMDB")
+                    floor_votes = (IMDB_MIN_VOTES if t["_src"] == "IMDb" else MIN_VOTES)[media][ranking]
+                    if t["_votes"] < floor_votes:
+                        continue
+                    if ranking == "recent" and t["_rating"] < RECENT_MIN_RATING[media]:
+                        continue
                     rows.append(t)
                 if not rows:
                     lists[ranking] = []
                     continue
-                prior = sum(t["vote_average"] for t in rows) / len(rows)
-                max_votes = max(t["vote_count"] for t in rows)
+                prior = sum(t["_rating"] for t in rows) / len(rows)
+                max_votes = max(t["_votes"] for t in rows)
                 max_pop = max(t.get("popularity") or 0 for t in rows) or 1
                 w = WEIGHTS[ranking]
 
                 def score(t):
-                    q = common.bayes_rating(t["vote_average"], t["vote_count"], prior, BAYES_M[media]) / 10
+                    m = (IMDB_BAYES_M if t["_src"] == "IMDb" else BAYES_M)[media]
+                    q = common.bayes_rating(t["_rating"], t["_votes"], prior, m) / 10
                     if ranking == "all_time":
-                        p = common.log_scale(t["vote_count"], max_votes)
+                        p = common.log_scale(t["_votes"], max_votes)
                     elif ranking == "trending":
                         p = 0.6 * common.log_scale(t.get("popularity") or 0, max_pop) + \
                             0.4 * (1 - week_rank[t["id"]] / 100 if t["id"] in week_rank else 0)
@@ -250,7 +318,7 @@ def build() -> dict:
                         continue
                     title = d.get("title") or d.get("name")
                     released = d.get("release_date") or d.get("first_air_date")
-                    why = (f"TMDB {t['vote_average']:.1f}/10 from {t['vote_count']:,} votes (weighted for vote count)"
+                    why = (f"{t['_src']} {t['_rating']:.1f}/10 from {t['_votes']:,} votes (weighted for vote count)"
                            + {"all_time": "", "recent": f"; released {released}" if media == "movie"
                               else f"; episodes aired since {year_ago}",
                               "trending": f"; #{week_rank[t['id']] + 1} on TMDB's weekly trending {media} list"
@@ -260,23 +328,38 @@ def build() -> dict:
                         "released": released, "overview": d.get("overview"),
                         "poster": IMG + d["poster_path"] if d.get("poster_path") else None,
                         "genres": [g["name"] for g in d.get("genres") or []],
-                        "rating": {"tmdb": t["vote_average"], "votes": t["vote_count"], "source": "TMDB"},
+                        "rating": {"value": t["_rating"], "votes": t["_votes"], "source": t["_src"],
+                                   "tmdb": t.get("vote_average"), "tmdb_votes": t.get("vote_count")},
                         "score": round(sc, 4), "why": why, "trailer": _trailer(d.get("videos")),
                         "watch": _providers(d.get("watch/providers")),
-                        "links": [{"name": "TMDB", "url": f"https://www.themoviedb.org/{media}/{t['id']}"}],
+                        "links": ([{"name": "IMDb", "url": f"https://www.imdb.com/title/{t['_imdb']}/"}] if t.get("_imdb") else [])
+                                 + [{"name": "TMDB", "url": f"https://www.themoviedb.org/{media}/{t['id']}"}],
                     }
                     if media == "tv":
                         card["seasons_count"] = d.get("number_of_seasons")
                         card["status"] = d.get("status")
                         if ranking == "all_time" and rank <= 10 or rank <= 3:
-                            card.update(_tv_extras(tmdb, d))
+                            tv_extras_todo.append((card, d, t.get("_imdb")))
                     cards[ranking].append(card)
-            out[media][tab] = {"name": name, **cards}
+            notes = {}
+            kind = "movies" if media == "movie" else "shows"
+            if tab in NO_RECENT:
+                notes["recent"] = f"Classics are older titles by definition, so there are no recent releases here. Try Best of All Time or Trending."
+            elif len(cards["recent"]) < LIMIT[media]:
+                notes["recent"] = (f"Only {len(cards['recent'])} {name} {kind} from the last 12 months are rated "
+                                   f"{RECENT_MIN_RATING[media]:.1f}+, so the list is shorter instead of padded with weaker titles.")
+            out[media][tab] = {"name": name, **cards, "notes": notes}
             common.log(f"movies {media}/{tab}: {len(cards['all_time'])}/{len(cards['recent'])}/{len(cards['trending'])}")
+
+    # TV season ratings and best episodes: IMDb (one pass over its episode file), else TMDB
+    episodes = imdb.episodes({i for _, _, i in tv_extras_todo if i})
+    for card, show, iid in tv_extras_todo:
+        card.update(_imdb_extras(tmdb, show, episodes.get(iid) or []) or _tv_extras(tmdb, show))
 
     # bound cache
     if len(state["tmdb"]) > 12000:
         state["tmdb"] = dict(list(state["tmdb"].items())[-12000:])
     common.save_json(STATE, state)
     common.log(f"movies: {tmdb.calls} TMDB calls")
-    return {"movies": out["movie"], "tv": out["tv"], "watch_region": REGION, "sources": ["TMDB", "JustWatch (via TMDB)"]}
+    return {"movies": out["movie"], "tv": out["tv"], "watch_region": REGION,
+            "sources": (["IMDb ratings"] if imdb.available else []) + ["TMDB", "JustWatch (via TMDB)"]}

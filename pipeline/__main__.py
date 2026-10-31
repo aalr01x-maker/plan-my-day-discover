@@ -21,7 +21,7 @@ ORDER = ["news", "movies", "games", "music", "sports"]
 
 def _count(data: dict, section: str) -> int:
     if section == "news":
-        return sum(len(r["today"]) + len(r["week"]) for r in data["regions"].values())
+        return sum(len(r["today"]) + len(r["week"]) + len(r.get("month", [])) for r in data["regions"].values())
     if section == "movies":
         return sum(len(t[k]) for media in ("movies", "tv") for t in data[media].values() for k in ("all_time", "recent", "trending"))
     if section in ("games", "music"):
@@ -31,7 +31,7 @@ def _count(data: dict, section: str) -> int:
     return 0
 
 
-MINIMUM = {"news": 30, "movies": 100, "games": 60, "music": 60, "sports": 40}
+MINIMUM = {"news": 30, "movies": 100, "games": 60, "music": 16, "sports": 40}  # music: YouTube lookups fill over the first days
 
 
 def main(argv: list[str]) -> int:

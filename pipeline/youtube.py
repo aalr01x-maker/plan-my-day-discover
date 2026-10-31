@@ -75,7 +75,8 @@ class YouTube:
             return []
         self.units += 100
         items = [{"id": i["id"]["videoId"], "title": i["snippet"]["title"], "published": i["snippet"].get("publishedAt"),
-                  "channel": i["snippet"].get("channelTitle"), "thumb": (i["snippet"].get("thumbnails", {}).get("high") or {}).get("url")}
+                  "channel": i["snippet"].get("channelTitle"), "channel_id": i["snippet"].get("channelId"),
+                  "thumb": (i["snippet"].get("thumbnails", {}).get("high") or {}).get("url")}
                  for i in data.get("items", []) if i.get("id", {}).get("videoId")]
         self.cache["search"][key] = {"at": common.iso(common.now_utc()), "items": items}
         return items

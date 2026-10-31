@@ -1,4 +1,6 @@
-"""Optimal News: Top 3 per region (plus a Business tab), Today (24 h) and This Week (7 days).
+"""Optimal News: Top 3 per region (plus a Business tab), Today (24 h), This Week (7 days) and
+This Month (30 days). The month view also draws on every earlier daily ranking (saved in state),
+so stories that dominated two weeks ago still count after their articles drop out of the feeds.
 
 Sources (all free, publisher feeds): BBC (world + regional), Al Jazeera, DW,
 France 24, and Reuters / AP via Google News search feeds. Articles about the same
@@ -37,6 +39,11 @@ FEEDS = [
     ("Al Jazeera", "https://www.aljazeera.com/xml/rss/all.xml", None),
     ("DW", "https://rss.dw.com/rdf/rss-en-world", None),
     ("France 24", "https://www.france24.com/en/rss", None),
+    # Oceania's own public broadcasters + Guardian Australia (the global outlets cover the region thinly)
+    ("ABC News (Australia)", "https://www.abc.net.au/news/feed/51120/rss.xml", "oceania"),
+    ("RNZ", "https://www.rnz.co.nz/rss/national.xml", "oceania"),
+    ("RNZ", "https://www.rnz.co.nz/rss/pacific.xml", "oceania"),
+    ("The Guardian", "https://www.theguardian.com/australia-news/rss", "oceania"),
 ]
 # Business tab (owner, 31 Oct 2026): a topic tab beside the regions, same ranking rules.
 BUSINESS_FEEDS = [
@@ -60,7 +67,8 @@ WIRE_QUERIES = {
     "europe": "Europe", "oceania": "(Australia OR New Zealand OR Pacific)",
 }
 WIRES = {"reuters.com": "Reuters", "apnews.com": "AP"}
-TIER = {"Reuters": 1.0, "AP": 1.0, "BBC News": 0.95, "Al Jazeera": 0.85, "DW": 0.85, "France 24": 0.85, "CNBC": 0.85}
+TIER = {"Reuters": 1.0, "AP": 1.0, "BBC News": 0.95, "Al Jazeera": 0.85, "DW": 0.85, "France 24": 0.85, "CNBC": 0.85,
+        "ABC News (Australia)": 0.9, "RNZ": 0.9, "The Guardian": 0.85}
 
 # Official news channels for report videos (matched from their latest uploads).
 NEWS_CHANNELS = {
@@ -87,8 +95,17 @@ def _collect() -> list[dict]:
     feeds = [(o, u, r, False) for o, u, r in FEEDS]
     feeds += [(None, GNEWS + f"(site:reuters.com OR site:apnews.com) {q} when:7d", None, False)
               for q in WIRE_QUERIES.values()]
+    # the three weeks before that, one search per week, so This Month sees the whole month
+    today = common.now_utc().date()
+    for k in range(1, 4):
+        after, before = today - timedelta(days=7 * k + 7), today - timedelta(days=7 * k)
+        feeds += [(None, GNEWS + f"(site:reuters.com OR site:apnews.com) {q} after:{after} before:{before}", None, False)
+                  for q in WIRE_QUERIES.values()]
     feeds += [(o, u, None, True) for o, u in BUSINESS_FEEDS]
-    feeds.append((None, GNEWS + f"(site:reuters.com OR site:apnews.com) {BUSINESS_QUERY} when:7d", None, True))
+    feeds.append((None, GNEWS + f"(site:reuters.com OR site:apnews.com) {BUSINESS_QUERY} when:30d", None, True))
+    for k in range(1, 4):
+        after, before = today - timedelta(days=7 * k + 7), today - timedelta(days=7 * k)
+        feeds.append((None, GNEWS + f"(site:reuters.com OR site:apnews.com) {BUSINESS_QUERY} after:{after} before:{before}", None, True))
     for outlet, url, region, business in feeds:
         try:
             parsed = feedparser.parse(common.get(url, as_json=False))
@@ -223,13 +240,34 @@ def _ai_enrich(events: list[dict], ai) -> None:
                 ev["ai"] = row
 
 
-def _score(ev: dict, now, window_hours: float) -> float:
-    corroboration = min(1.0, math.log1p(len(ev["outlets"])) / math.log1p(6))
-    sig = SIGNIFICANCE[ev["ai"]["significance"]] if ev.get("ai") else ev["keyword_severity"]
-    age_h = (now - ev["latest"]).total_seconds() / 3600
+ARCHIVE = common.STATE / "news_archive.json"
+
+
+def _parts(ev: dict) -> dict:
+    """What a score is made of, kept so archived stories can be re-scored later."""
+    return {"outlets": len(ev["outlets"]),
+            "sig": SIGNIFICANCE[ev["ai"]["significance"]] if ev.get("ai") else ev["keyword_severity"],
+            "latest": common.iso(ev["latest"]), "tier": max(TIER.get(s, 0.5) for s in ev["outlets"]),
+            "days": len({a["published"].date() for a in ev["articles"]})}
+
+
+def _score_parts(parts: dict, now, window_hours: float) -> float:
+    corroboration = min(1.0, math.log1p(parts["outlets"]) / math.log1p(6))
+    age_h = (now - common.parse_time(parts["latest"])).total_seconds() / 3600
     recency = max(0.0, 1 - age_h / window_hours)
-    tier = max(TIER.get(s, 0.5) for s in ev["outlets"])
-    return round(0.35 * corroboration + 0.30 * sig + 0.20 * recency + 0.15 * tier, 4)
+    # how many days the story stayed in the news: a week or month list favours lasting stories
+    persistence = min(1.0, (parts.get("days", 1) - 1) / (3 if window_hours <= 168 else 7))
+    if window_hours > 24 * 14:
+        return round(0.30 * corroboration + 0.30 * parts["sig"] + 0.20 * persistence + 0.05 * recency
+                     + 0.15 * parts["tier"], 4)
+    if window_hours > 24:
+        return round(0.30 * corroboration + 0.25 * parts["sig"] + 0.15 * persistence + 0.15 * recency
+                     + 0.15 * parts["tier"], 4)
+    return round(0.35 * corroboration + 0.30 * parts["sig"] + 0.20 * recency + 0.15 * parts["tier"], 4)
+
+
+def _score(ev: dict, now, window_hours: float) -> float:
+    return _score_parts(_parts(ev), now, window_hours)
 
 
 def _why(ev: dict) -> str:
@@ -253,13 +291,13 @@ def _distinct_first(articles: list[dict]) -> list[dict]:
 
 def build(ai=None, yt: YouTube | None = None) -> dict:
     now = common.now_utc()
-    items = [i for i in _collect() if common.within(i["published"], 7 * 24, now)]
+    items = [i for i in _collect() if common.within(i["published"], 30 * 24, now)]
     if not items:
         raise RuntimeError("no news articles fetched")
     events = _cluster(items)
 
     # Candidates for AI: the best keyword-scored events per region and window.
-    for window in (24, 168):
+    for window in (24, 168, 720):
         for tab in TABS:
             pool = [ev for ev in events if common.within(ev["latest"], window, now)
                     and (tab == "world" or (ev["business"] if tab == "business" else tab in ev["regions"]))]
@@ -307,8 +345,14 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
     def signature(ev: dict) -> set[str]:
         return {w for a in ev["articles"] for w in common.tokens(a["title"]) if df.get(w, 0) <= rare_cut}
 
+    def gist(ev: dict) -> str:
+        return ev["lead"]["title"] + " " + ((ev.get("ai") or {}).get("summary") or ev["lead"]["summary"] or "")
+
     def same_story(a: dict, b: dict) -> bool:
         if a.get("ai") and b.get("ai") and a["ai"].get("story") and a["ai"]["story"] == b["ai"].get("story"):
+            return True
+        # the same event under different headlines ("ECB chief steps down" / "European Central Bank head resigns")
+        if common.similarity(gist(a), gist(b)) >= 0.28:
             return True
         return len(signature(a) & signature(b)) >= 2
 
@@ -331,7 +375,81 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             return tab == ai_row["region"]
         return tab in ev["regions"]
 
+    # Earlier daily rankings: stories whose articles have left the feeds still count for the month
+    archive = {k: v for k, v in common.load_json(ARCHIVE, {}).items()
+               if common.within(common.parse_time(v["parts"]["latest"]), 30 * 24, now)}
+    live_ids = {ev["id"] for ev in events}
+
+    def same_as_archived(entry: dict, picked: list) -> bool:
+        for p in picked:
+            if isinstance(p, dict) and "parts" in p:
+                other_title, other_story = p["card"]["headline"], p.get("story")
+            else:
+                other_title, other_story = p["lead"]["title"], (p.get("ai") or {}).get("story")
+            if entry.get("story") and entry["story"] == other_story:
+                return True
+            if common.similarity(entry["card"]["headline"], other_title) >= 0.45:
+                return True
+            mine = entry["card"]["headline"] + " " + (entry["card"].get("summary") or "")
+            theirs = (p["card"]["headline"] + " " + (p["card"].get("summary") or "")) if "parts" in p else \
+                (p["lead"]["title"] + " " + ((p.get("ai") or {}).get("summary") or ""))
+            if common.similarity(mine, theirs) >= 0.28:
+                return True
+        return False
+
+    MONTH_SYSTEM = (
+        "You are a news editor. From the numbered stories below (all from the last 30 days, for the section named), "
+        "choose the 3 most significant: lasting impact, scale (lives, countries, economies affected), and importance "
+        "beyond the day. Prefer reported events (disasters, conflicts, elections, deaths, major decisions) over opinion, "
+        "analysis or commentary pieces, and over routine forecasts, previews or minor incidents. The 3 picks must be "
+        "3 different stories, not two developments of the same story. For a Business "
+        "section only choose stories that are mainly about business, markets or the economy. Use only the given text. "
+        "Return the ids of your 3 picks, most significant first.")
+    MONTH_SCHEMA = {"type": "object", "properties": {"picks": {"type": "array", "items": {"type": "string"}}},
+                    "required": ["picks"], "additionalProperties": False}
+
+    def month_top3(region: str) -> list[dict]:
+        pool = [(ev, _score(ev, now, 720)) for ev in events if in_tab(ev, region)]
+        pool += [(a, _score_parts(a["parts"], now, 720)) for k, a in archive.items()
+                 if k not in live_ids and region in a["tabs"]]
+        pool.sort(key=lambda x: -x[1])
+        picked = []
+        limit = 25 if ai and ai.available else 3   # the AI editor picks 3 from the 25 strongest
+        for item, sc in pool:
+            if "parts" in item:
+                if same_as_archived(item, picked):
+                    continue
+            elif any(same_story(item, p) for p in picked if "parts" not in p) or \
+                    same_as_archived({"card": {"headline": item["lead"]["title"], "summary": (item.get("ai") or {}).get("summary")},
+                                      "story": (item.get("ai") or {}).get("story")},
+                                     [p for p in picked if "parts" in p]):
+                continue
+            picked.append(item)
+            if len(picked) == limit:
+                break
+        if len(picked) > 3:
+            def text(item):
+                if "parts" in item:
+                    return f"{item['card']['headline']}: {(item['card'].get('summary') or '')[:220]}"
+                return f"{item['lead']['title']}: {((item.get('ai') or {}).get('summary') or item['lead']['summary'] or '')[:220]}"
+            ids = [str(i) for i in range(len(picked))]
+            listing = "\n".join(f"id={i} :: {text(it)}" for i, it in zip(ids, picked))
+            res = ai.json_call("news-month:" + common.fingerprint(region, listing), MONTH_SYSTEM,
+                               f"Section: {TAB_NAMES[region]}\n{listing}", MONTH_SCHEMA, max_tokens=300)
+            chosen = [int(i) for i in (res or {}).get("picks", []) if i in ids]
+            chosen = list(dict.fromkeys(chosen))[:3]
+            picked = [picked[i] for i in chosen] + [x for i, x in enumerate(picked) if i not in chosen]
+            picked = picked[:3]
+        out = []
+        for item in picked:
+            if "parts" in item:
+                out.append({**item["card"], "score": _score_parts(item["parts"], now, 720), "older": False})
+            else:
+                out.append({**card(item, 720), "older": False})
+        return out
+
     regions = {}
+    new_archive = dict(archive)
     for region in TABS:
         out = {}
         for label, window in (("today", 24), ("week", 168)):
@@ -342,7 +460,29 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                 if in_tab(ev, region):
                     pool.append(ev)
             pool.sort(key=lambda e: _score(e, now, window), reverse=True)
-            out[label] = [card(ev, window) for ev in top3(pool)]
+            picked = top3(pool)
+            if label == "today" and len(picked) < 3:
+                # a quiet day for this region: fill Today with its most recent stories (dated on the card)
+                older = sorted((ev for ev in events if in_tab(ev, region) and ev not in picked
+                                and common.within(ev["latest"], 72, now)), key=lambda e: e["latest"], reverse=True)
+                for ev in older:
+                    if len(picked) >= 3:
+                        break
+                    if not any(same_story(ev, p) for p in picked):
+                        picked.append(ev)
+                        ev["_older"] = True
+            out[label] = [{**card(ev, window), "older": bool(ev.get("_older")) and not common.within(ev["latest"], 24, now)}
+                          for ev in picked]
+        out["month"] = month_top3(region)
         regions[region] = {"name": TAB_NAMES[region], **out}
+        # save this region's 10 strongest stories of the week for future month rankings
+        week_pool = sorted((ev for ev in events if in_tab(ev, region) and common.within(ev["latest"], 168, now)),
+                           key=lambda e: _score(e, now, 168), reverse=True)[:10]
+        for ev in week_pool:
+            entry = new_archive.get(ev["id"]) or {"tabs": []}
+            entry.update(card=card(ev, 168), parts=_parts(ev), story=(ev.get("ai") or {}).get("story") or "")
+            entry["tabs"] = sorted(set(entry["tabs"]) | {region})
+            new_archive[ev["id"]] = entry
+    common.save_json(ARCHIVE, new_archive)
     return {"regions": regions, "article_count": len(items), "event_count": len(events),
             "outlets": sorted({i["source"] for i in items})}

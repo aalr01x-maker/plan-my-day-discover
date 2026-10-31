@@ -27,6 +27,7 @@ of the game on Steam (SteamSpy tag lists alone are too loose: any game tagged
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -58,7 +59,7 @@ TAGS_PER_RUN = 900         # SteamSpy asks for 1 request / second
 TOP_TAGS = 7
 NOT_GAMES = {"Software", "Utilities", "Design & Illustration", "Animation & Modeling", "Video Production",
              "Audio Production", "Photo Editing", "Game Development"}
-VIDEOS_PER_RUN = 15
+VIDEOS_PER_RUN = 5
 
 
 def _user_score(pos: int, neg: int) -> tuple[float | None, int]:
@@ -116,7 +117,8 @@ def _details(appid: str, cache: dict, budget: list[int]) -> dict | None:
 def _tags(appid: str, cache: dict, budget: list[int]) -> list[str] | None:
     """The game's top player tags (most votes first), cached 30 days."""
     hit = cache.get(appid)
-    if hit and common.within(common.parse_time(hit["at"]), 30 * 24):
+    # entries cached before review numbers were kept ("a") are refreshed
+    if hit and "a" in hit and common.within(common.parse_time(hit["at"]), 30 * 24):
         return hit["t"]
     if budget[0] <= 0:
         return hit["t"] if hit else None
@@ -148,16 +150,39 @@ def _rawg(key: str, params: dict, extra: dict, pages: int = 2) -> list[dict]:
     return out
 
 
-def _rawg_card(g: dict, weight_q: float, max_added: int, flags_from: list, allow_unscored: bool = False) -> dict | None:
-    """A card for a game found only on RAWG (no Steam page): RAWG user rating + Metacritic.
-    New releases often have no scores yet: with allow_unscored they are listed (never given a
-    made-up score) and rank below scored games, by popularity only."""
-    n = g.get("ratings_count") or 0
-    user = round(common.bayes_rating((g.get("rating") or 0) * 20, n, PRIOR, 200), 1) if n >= 30 else None
-    scores = [x for x in (user, g.get("metacritic")) if x]
+def _rawg_stores(key: str, game_id: int, cache: dict) -> dict:
+    """A RAWG game's exact store pages: {"steam": appid or None, "ps": PlayStation Store url or None}.
+    Store links never change, so they are cached for good."""
+    hit = cache.get(str(game_id))
+    if hit is not None:
+        return hit
+    try:
+        data = common.get(f"{RAWG}/games/{game_id}/stores", params={"key": key})
+    except common.FetchError as exc:
+        common.log(f"games: rawg stores {game_id}: {exc}")
+        return {"steam": None, "ps": None}
+    out = {"steam": None, "ps": None}
+    for row in data.get("results") or []:
+        url = row.get("url") or ""
+        m = re.search(r"store\.steampowered\.com/app/(\d+)", url)
+        if m:
+            out["steam"] = m.group(1)
+        elif "store.playstation.com" in url:
+            out["ps"] = url
+    cache[str(game_id)] = out
+    return out
+
+
+def _rawg_card(g: dict, weight_q: float, max_added: int, flags_from: list, allow_unscored: bool = False,
+               ps_url: str | None = None) -> dict | None:
+    """A card for a game that isn't on Steam (console exclusives). Only the Metacritic critic score is
+    shown: Sony and Nintendo publish no player or review counts, and RAWG's own user ratings are too few
+    to be representative. New releases without a critic score yet are listed only in Best Recent,
+    below scored games (ordered by how many RAWG users track them; that number isn't shown)."""
+    critic = g.get("metacritic")
     popularity = common.log_scale(g.get("added") or 0, max_added)
-    if scores:
-        score = weight_q * sum(scores) / len(scores) / 100 + (1 - weight_q) * popularity
+    if critic:
+        score = weight_q * critic / 100 + (1 - weight_q) * popularity
     elif allow_unscored and (g.get("added") or 0) >= 3:
         score = 0.25 * popularity
     else:
@@ -167,21 +192,31 @@ def _rawg_card(g: dict, weight_q: float, max_added: int, flags_from: list, allow
     return {
         "id": f"rawg-{g['id']}", "rank": 0, "title": g["name"], "developer": None, "released": g.get("released"),
         "image": g.get("background_image"),
-        "critic": {"score": g["metacritic"], "source": "Metacritic", "url": None} if g.get("metacritic") else None,
-        "user": {"score": user, "reviews": n, "source": "RAWG user ratings", "confidence": _confidence(n * 10)} if user else
-                {"score": None, "reviews": 0, "source": "RAWG user ratings", "confidence": "low"},
-        "players_yesterday": None, "platforms": platforms,
+        "critic": {"score": critic, "source": "Metacritic", "url": None} if critic else None,
+        "user": None, "players_now": None, "platforms": platforms,
         "flags": [f for f in ("indie", "survival", "multiplayer") if f in tags],
         "genres": [x["name"] for x in g.get("genres") or []], "score": round(score, 4),
-        "why": (f"Metacritic {g['metacritic']}; " if g.get("metacritic") else "")
-               + (f"{user:.0f}% weighted RAWG user rating from {n:,} ratings" if user else
-                  "no critic or user score yet; ranked by how many RAWG users added it")
-               + "; not on Steam, so console data from RAWG.",
+        "why": (f"Metacritic critic score {critic}" if critic else "No critic score published yet")
+               + "; not on Steam, and PlayStation/Nintendo publish no player or review counts.",
         "video": None, "trailer": None,
-        "links": [{"name": "RAWG", "url": f"https://rawg.io/games/{g['slug']}"}]
-                 + ([{"name": "PlayStation Store (search)", "url": "https://store.playstation.com/en-us/search/" + g["name"].replace("/", " ")}]
-                    if any("PlayStation" in p for p in platforms) else []),
+        "links": ([{"name": "PlayStation Store", "url": ps_url}] if ps_url else
+                  [{"name": "PlayStation Store (search)", "url": "https://store.playstation.com/en-us/search/" + g["name"].replace("/", " ")}]
+                  if any("PlayStation" in p for p in platforms) else [])
+                 + [{"name": "RAWG", "url": f"https://rawg.io/games/{g['slug']}"}],
     }
+
+
+def _players_now(appid: str, cache: dict) -> int | None:
+    """Players in the game right now, from Steam's own official API."""
+    if appid not in cache:
+        try:
+            data = common.get("https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/",
+                              params={"appid": appid}, tries=2)
+            cache[appid] = (data.get("response") or {}).get("player_count")
+        except common.FetchError:
+            cache[appid] = None
+        time.sleep(0.15)
+    return cache[appid]
 
 
 def build(yt: YouTube | None = None) -> dict:
@@ -190,6 +225,7 @@ def build(yt: YouTube | None = None) -> dict:
     year_ago = (now - timedelta(days=365)).strftime("%Y-%m-%d")
     state = common.load_json(STATE, {"details": {}, "ccu": {}, "videos": {}})
     state.setdefault("tags", {})
+    state.setdefault("rawg_stores", {})
     time.sleep(1.1)
     try:
         two_weeks = common.get(SPY, params={"request": "top100in2weeks"}, timeout=90) or {}
@@ -202,6 +238,7 @@ def build(yt: YouTube | None = None) -> dict:
         most_played = {}
     rawg_key = common.env("RAWG_API_KEY")
     budget, vbudget, tbudget = [DETAILS_PER_RUN], [VIDEOS_PER_RUN], [TAGS_PER_RUN]
+    players_now: dict = {}
     ccu_hist = state["ccu"]
 
     genres = {}
@@ -306,8 +343,9 @@ def build(yt: YouTube | None = None) -> dict:
                     rawg_by_name[common.norm(g["name"]).strip()] = g
                     rawg_lists[ranking].append(g)
 
-        def card(rank, score, r, d, why):
-            rawg = rawg_by_name.get(common.norm(r["name"]).strip())
+        def card(rank, score, r, d, why, rawg=None):
+            rawg = rawg or rawg_by_name.get(common.norm(r["name"]).strip())
+            ps_url = _rawg_stores(rawg_key, rawg["id"], state["rawg_stores"]).get("ps") if rawg and rawg_key else None
             critic = d.get("metacritic") or (rawg or {}).get("metacritic")
             platforms = ["PC"] + (["Mac"] if "mac" in d["platforms"] else []) + (["Linux"] if "linux" in d["platforms"] else [])
             if rawg:
@@ -324,12 +362,13 @@ def build(yt: YouTube | None = None) -> dict:
                 "critic": {"score": critic, "source": "Metacritic", "url": d.get("metacritic_url")} if critic else None,
                 "user": {"score": r["user"], "reviews": r["reviews"], "source": "Steam reviews",
                          "confidence": _confidence(r["reviews"])},
-                "players_yesterday": r["ccu"], "platforms": platforms,
+                "players_now": _players_now(r["appid"], players_now), "platforms": platforms,
                 "flags": [f for f, tag in FLAG_TAGS.items() if tag in ((state["tags"].get(r["appid"]) or {}).get("t") or [])],
                 "genres": d.get("genres"), "score": round(score, 4), "why": why,
                 "video": video or None, "trailer": d.get("trailer"),
                 "links": [{"name": "Steam", "url": f"https://store.steampowered.com/app/{r['appid']}/"}]
-                         + ([{"name": "PlayStation Store (search)",
+                         + ([{"name": "PlayStation Store", "url": ps_url}] if ps_url else
+                            [{"name": "PlayStation Store (search)",
                               "url": "https://store.playstation.com/en-us/search/" + r["name"].replace("/", " ")}]
                             if any("PlayStation" in p for p in platforms) else [])
                          + ([{"name": "RAWG", "url": f"https://rawg.io/games/{rawg['slug']}"}] if rawg else []),
@@ -337,12 +376,12 @@ def build(yt: YouTube | None = None) -> dict:
 
         def why_all(r, d):
             c = f"Metacritic {d['metacritic']}, " if d.get("metacritic") else ""
-            return f"{c}{r['user']:.0f}% weighted Steam user score from {r['reviews']:,} reviews."
+            return f"{c}{r['user']:.0f}% positive Steam reviews (weighted) from {r['reviews']:,} reviews."
 
         out = {
             "all_time": [card(i + 1, s, r, d, why_all(r, d)) for i, (s, r, d) in enumerate(lists["all_time"])],
             "recent": [card(i + 1, s, r, d, f"Released {d['released']}; " + why_all(r, d)) for i, (s, r, d) in enumerate(lists["recent"])],
-            "trending": [card(i + 1, s, r, d, f"{r['ccu']:,} peak players yesterday on Steam"
+            "trending": [card(i + 1, s, r, d, f"{r['ccu']:,} peak players in a day on Steam (SteamSpy)"
                               + (f"; #{most_played[r['appid']]['rank']} on Steam's most-played chart"
                                  + (f" (was #{most_played[r['appid']]['last_week_rank']} last week)"
                                     if most_played[r['appid']].get('last_week_rank') else "")
@@ -351,7 +390,10 @@ def build(yt: YouTube | None = None) -> dict:
                               + (f"; players {ccu_growth(r['appid']):+.0%} this week" if ccu_growth(r["appid"]) else "") + ".")
                          for i, (s, r, d) in enumerate(lists["trending"])],
         }
-        # Games RAWG knows but Steam doesn't (console exclusives incl. PS5), ranked by the same weights
+        # RAWG's genre lists add games beyond Steam's charts. A game that is on Steam (RAWG gives its
+        # exact Steam link) is scored with its Steam reviews like every other Steam game; only games
+        # not on Steam (console exclusives) fall back to RAWG's much smaller user-rating counts.
+        steam_ids = {c["id"] for lst in out.values() for c in lst}
         steam_names = {common.norm(c["title"]).strip() for lst in out.values() for c in lst}
         for ranking, weight_q in (("all_time", 0.85), ("recent", 0.75)):
             extra, seen = [], set()
@@ -361,9 +403,28 @@ def build(yt: YouTube | None = None) -> dict:
                 if key in steam_names or key in seen or not g.get("released"):
                     continue
                 seen.add(key)
-                card = _rawg_card(g, weight_q, max_added, flags_from=g.get("tags") or [], allow_unscored=ranking == "recent")
-                if card:
-                    extra.append(card)
+                appid = _rawg_stores(rawg_key, g["id"], state["rawg_stores"]).get("steam")
+                if appid:
+                    if appid in steam_ids:
+                        continue
+                    _tags(appid, state["tags"], tbudget)
+                    a = (state["tags"].get(appid) or {}).get("a") or {}
+                    user, n = _user_score(int(a.get("positive") or 0), int(a.get("negative") or 0))
+                    d = _details(appid, state["details"], budget)
+                    if user is not None and d and d.get("type") == "game":
+                        if ranking == "recent" and not ((d.get("released") or g.get("released") or "") >= year_ago):
+                            continue
+                        r = {"appid": appid, "name": a.get("name") or g["name"], "developer": a.get("developer"),
+                             "user": user, "reviews": n, "ccu": int(a.get("ccu") or 0), "owners": a.get("owners")}
+                        sc = weight_q * quality(r, d) + (1 - weight_q) * common.log_scale(n, max_reviews)
+                        why = (f"Released {d.get('released') or g.get('released')}; " if ranking == "recent" else "") + why_all(r, d)
+                        extra.append(card(0, sc, r, d, why, rawg=g))
+                        steam_ids.add(appid)
+                        continue
+                rawg_only = _rawg_card(g, weight_q, max_added, flags_from=g.get("tags") or [], allow_unscored=ranking == "recent",
+                                       ps_url=_rawg_stores(rawg_key, g["id"], state["rawg_stores"]).get("ps"))
+                if rawg_only:
+                    extra.append(rawg_only)
             merged = sorted(out[ranking] + extra, key=lambda c: -c["score"])[:20]
             for i, c in enumerate(merged):
                 c["rank"] = i + 1
