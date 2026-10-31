@@ -1,15 +1,13 @@
-"""Musica: the owner's 8 genres, three Top 20 lists each.
+"""Music: the owner's genres, three Top 20 lists each.
 
-Songs have no reliable public "quality" rating, so the weights apply only to what
-can be measured (owner's rule):
+Every list is ranked by YouTube alone (owner, 31 Oct 2026); tags only decide which
+genre a song belongs to:
 
-  Best of All Time   listeners (Last.fm's all-time listeners where known, log scale)
-                     85% + genre fit 15%
-  Best Recent        released in the last 12 months; listeners 75% + genre fit 25%
-  Trending (7 days)  the most recent measured momentum 70% + listeners 30%:
-                     listen growth between our daily snapshots when we have it,
-                     else listens on ListenBrainz's weekly chart, else listeners
-                     per week since release. Each card says which one ranked it.
+  Best of All Time   YouTube views of the song's official upload
+  Best Recent        released in the last 12 months; YouTube views
+  Trending (7 days)  YouTube views gained per week (between our daily counts), else
+                     views per week since the video went up (under 2 years old) 70%
+                     + total YouTube views 30%. Each card says which one ranked it.
 
 A song counts for a genre only if MusicBrainz tags the recording, its release or
 its artist with one of the genre's tags (checked, not assumed from search).
@@ -589,8 +587,9 @@ def build(yt: YouTube | None = None) -> dict:
         a_rows, r_rows = with_yt(at), with_yt(rc)
         max_a = max((x["yt"]["views"] for x in a_rows), default=1)
         max_r = max((x["yt"]["views"] for x in r_rows), default=1)
-        all_time = top(a_rows, lambda x: 0.85 * common.log_scale(x["yt"]["views"], max_a) + 0.15 * x["fit"])
-        recent = top(r_rows, lambda x: 0.75 * common.log_scale(x["yt"]["views"], max_r) + 0.25 * x["fit"])
+        # ranked by YouTube alone; genre tags only decide membership
+        all_time = top(a_rows, lambda x: x["yt"]["views"])
+        recent = top(r_rows, lambda x: x["yt"]["views"])
 
         # Trending: views gained per week (between our daily counts), else views per week since the
         # video went up when it is under 2 years old
@@ -627,8 +626,8 @@ def build(yt: YouTube | None = None) -> dict:
             }
 
         lists = {
-            "all_time": [card(x, i + 1, f"{x['yt']['views']:,} views on YouTube ({x['yt'].get('channel')}); "
-                                        f"genre-tag fit {x['fit']:.0%}.") for i, x in enumerate(all_time)],
+            "all_time": [card(x, i + 1, f"{x['yt']['views']:,} views on YouTube ({x['yt'].get('channel')}).")
+                         for i, x in enumerate(all_time)],
             "recent": [card(x, i + 1, f"Released {x['released']}; {x['yt']['views']:,} views on YouTube.") for i, x in enumerate(recent)],
             "trending": [card(x, i + 1, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.") for i, x in enumerate(trending)],
         }
