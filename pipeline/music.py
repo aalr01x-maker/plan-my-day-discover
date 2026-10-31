@@ -282,6 +282,9 @@ def _match(song: dict, videos: list[dict]) -> list[dict]:
     return out
 
 
+_RUN_UPLOADS: dict[str, list[dict]] = {}   # channel id -> its uploads, this run only
+
+
 def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int], channel_budget: list[int]) -> dict | None:
     """The song's most-viewed official upload: its music video, official audio or the artist's
     auto-generated "Topic" track. Covers, reactions and fan re-uploads don't count.
@@ -293,17 +296,17 @@ def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int
         ids = state.setdefault("yt_channel_ids", {})
         cid = _artist_channel(yt, url, ids) if url else _guess_channel(yt, song["artist"], ids)
         if cid:
-            uploads = state.setdefault("yt_uploads", {})
-            hit = uploads.get(cid)
-            if not hit or not common.within(common.parse_time(hit["at"]), 30 * 24):
+            # upload lists are kept for this run only (saving them grew the state file by MBs a day);
+            # re-reading a channel on a later day costs just 1-4 units
+            videos = _RUN_UPLOADS.get(cid)
+            if videos is None:
                 channel_budget[0] -= 1
                 vids = yt.uploads(cid, pages=4)
                 if yt.exhausted:
                     return "later"
-                hit = uploads[cid] = {"at": common.iso(common.now_utc()),
-                                      "videos": [{"id": v["id"], "title": v["title"], "channel": v.get("channel"),
-                                                  "published": v.get("published")} for v in vids]}
-            candidates = _match(song, hit["videos"])
+                videos = _RUN_UPLOADS[cid] = [{"id": v["id"], "title": v["title"], "channel": v.get("channel"),
+                                               "published": v.get("published")} for v in vids]
+            candidates = _match(song, videos)
     if not candidates:
         if search_budget[0] <= 0 or yt.exhausted or yt.units >= YOUTUBE_CEILING:
             return "later"
@@ -594,6 +597,9 @@ def build(yt: YouTube | None = None) -> dict:
 
     common.log(f"music: {lookups[0]} songs looked up ({YOUTUBE_LOOKUPS - search_budget[0]} by search), "
                f"{len(ids)} videos tracked, {pending} songs still to look up")
+    state.pop("yt_uploads", None)    # no longer saved (see _RUN_UPLOADS)
+    if len(state["meta"]) > 30000:   # MusicBrainz details (~0.5 KB each): keep the newest 30,000, about 15 MB
+        state["meta"] = dict(list(state["meta"].items())[-30000:])
     if len(state["itunes"]) > 6000:
         state["itunes"] = dict(list(state["itunes"].items())[-6000:])
     state.pop("history", None)
