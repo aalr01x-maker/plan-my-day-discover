@@ -128,7 +128,7 @@ const ABOUT = {
   news: "Stories are grouped across BBC, Reuters, AP, Al Jazeera, DW, France 24 and CNBC, then ranked by how many independent outlets confirm them (35%), significance (30%), recency (20%) and source reliability (15%). Duplicates are merged into one story.",
   movies: "Ranked from IMDb ratings (TMDB only where IMDb has none) and popularity. Every list shows only titles rated 7.5+ out of 10. Ratings are weighted by number of votes, so a title with a few votes can't top the list; each ranking mixes quality and popularity differently.",
   gaming: "Ranked only by Steam player reviews (weighted by how many people reviewed) plus popularity on Steam. Every review and player count is Steam's own; games not sold on Steam (Nintendo and PlayStation exclusives) aren't listed.",
-  music: "Ranked only by YouTube: views of each song's official upload (artist channel, VEVO or Topic). Genre tags from MusicBrainz only decide which genre a song belongs to, never its rank.",
+  music: "Ranked only by YouTube: views of each song's official upload (artist channel, VEVO or Topic). Last.fm, Deezer charts and MusicBrainz only decide which genre a song belongs to, never its rank.",
   sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
 };
 /* Where each section's facts come from, shown in a banner under its title */
@@ -136,7 +136,7 @@ const SOURCES = {
   news: "BBC, Reuters, AP, Al Jazeera, DW, France 24, CNBC, ABC News Australia, RNZ and The Guardian. Every story links to the original reports; AI only writes the short summary.",
   movies: "IMDb (ratings and vote counts, from IMDb's official daily data), TMDB (titles, posters, trailers) and JustWatch via TMDB (where to stream).",
   gaming: "Steam (official player reviews, live player counts and charts) and RAWG (to find games in each genre and which consoles they're also on).",
-  music: "YouTube (view counts of each song's official video or audio), MusicBrainz and ListenBrainz (genres) and Apple's iTunes (artwork and previews).",
+  music: "YouTube (view counts of each song's official video or audio: the only ranking), Last.fm, Deezer's streaming charts, MusicBrainz and ListenBrainz (which songs belong to each genre) and Apple's iTunes (artwork and previews).",
   sports: "Official league YouTube channels (Premier League, NBA, NFL, UFC, Formula 1 and more), BBC Sport, ESPN, Yahoo Sports, CBS Sports, Motorsport.com, HLTV, The Guardian, and each league's established outlets.",
 };
 function heading(section, crumbs) {

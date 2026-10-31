@@ -37,15 +37,7 @@ MB = "https://musicbrainz.org/ws/2/recording"
 STATE = common.STATE / "music.json"
 
 GENRES = {
-    "progressive-house": ("Progressive / Organic House", ["progressive house", "organic house", "melodic house"]),
-    "chillwave-trip-hop": ("Uplifting Chillwave / Trip Hop", ["chillwave", "trip hop", "downtempo"]),
-    "indie-electro": ("Indie Electro", ["indietronica", "indie electronic", "indie electronica"]),
-    "ambient-pop": ("Ambient Pop / Ethereal Vocals", ["dream pop", "ambient pop", "ethereal"]),
-    "electro-jazz-soul": ("Electro-Jazz / Electro Soul", ["nu jazz", "electro soul", "future soul", "electro swing"]),
-    "retrowave": ("Retrowave", ["synthwave", "retrowave", "outrun"]),
-    "nu-disco": ("Nu-Disco / Chill Dance", ["nu disco", "nu-disco", "disco house"]),
-    "conscious-rap": ("Conscious Rap / Mellow Vocal Hip-Hop", ["conscious hip hop", "jazz rap", "alternative hip hop"]),
-    # added 31 Oct 2026 (owner)
+    # broad genres first (owner, 31 Oct 2026), then the owner's original, more niche ones
     "rap": ("Rap", ["hip hop", "rap", "east coast hip hop", "west coast hip hop"]),
     "rock": ("Rock", ["rock", "classic rock", "hard rock", "alternative rock"]),
     "rnb": ("R&B", ["r&b", "contemporary r&b", "neo soul", "rhythm and blues"]),
@@ -60,6 +52,14 @@ GENRES = {
     "house": ("House", ["house", "deep house", "tech house", "french house"]),
     "trap": ("Trap", ["trap", "trap rap", "drill"]),
     "arabic": ("Arabic", ["arabic", "arabic pop", "khaleeji", "rai", "egyptian", "lebanese"]),
+    "progressive-house": ("Progressive / Organic House", ["progressive house", "organic house", "melodic house"]),
+    "chillwave-trip-hop": ("Uplifting Chillwave / Trip Hop", ["chillwave", "trip hop", "downtempo"]),
+    "indie-electro": ("Indie Electro", ["indietronica", "indie electronic", "indie electronica"]),
+    "ambient-pop": ("Ambient Pop / Ethereal Vocals", ["dream pop", "ambient pop", "ethereal"]),
+    "electro-jazz-soul": ("Electro-Jazz / Electro Soul", ["nu jazz", "electro soul", "future soul", "electro swing"]),
+    "retrowave": ("Retrowave", ["synthwave", "retrowave", "outrun"]),
+    "nu-disco": ("Nu-Disco / Chill Dance", ["nu disco", "nu-disco", "disco house"]),
+    "conscious-rap": ("Conscious Rap / Mellow Vocal Hip-Hop", ["conscious hip hop", "jazz rap", "alternative hip hop"]),
 }
 # The artist must belong to the genre's family too (their own MusicBrainz tags), so one stray tag
 # can't put a pop song under Progressive House. Artists with no tags at all need a strong song tag.
@@ -142,17 +142,79 @@ def _lastfm_candidates(key: str) -> dict[str, dict]:
     for gid, (_, tags) in GENRES.items():
         pool: dict[str, float] = {}
         for tag in tags:
-            try:
-                data = common.get(LASTFM, params={"method": "tag.gettoptracks", "tag": tag, "limit": 100,
-                                                  "api_key": key, "format": "json"})
-            except common.FetchError as exc:
-                common.log(f"music: last.fm {tag!r}: {exc}")
-                continue
-            tracks = (data.get("tracks") or {}).get("track") or []
-            for rank, t in enumerate(tracks):
-                if t.get("mbid"):
-                    pool[t["mbid"]] = max(pool.get(t["mbid"], 0), 1 - rank / 200)
+            for page in (1, 2, 3):   # Last.fm's top 300 for the tag (millions of listeners)
+                try:
+                    data = common.get(LASTFM, params={"method": "tag.gettoptracks", "tag": tag, "limit": 100,
+                                                      "page": page, "api_key": key, "format": "json"})
+                except common.FetchError as exc:
+                    common.log(f"music: last.fm {tag!r}: {exc}")
+                    break
+                tracks = (data.get("tracks") or {}).get("track") or []
+                for rank, t in enumerate(tracks, start=(page - 1) * 100):
+                    if t.get("mbid"):
+                        pool[t["mbid"]] = max(pool.get(t["mbid"], 0), 1 - rank / 600)
+                if len(tracks) < 100:
+                    break
         out[gid] = pool
+    return out
+
+
+# Deezer's official streaming charts add each broad genre's current hits (Deezer's own genre, so no
+# tags are needed). Arabic: Deezer's charts for Arab countries, keeping songs in Arabic script or by
+# artists who chart across Arab countries but not globally.
+DEEZER = "https://api.deezer.com"
+DEEZER_GENRES = {"rap": 116, "rock": 152, "rnb": 165, "edm-techno": 106, "country": 84, "jazz": 129,
+                 "classical": 98, "blues": 153, "reggae": 144, "alternative": 85}
+DEEZER_ARAB_CHARTS = {"Egypt": 1362501615, "Saudi Arabia": 1362521285, "Morocco": 1362512715,
+                      "United Arab Emirates": 1362491345, "Lebanon": 1362511155, "Algeria": 1362501015}
+ARABIC_SCRIPT = re.compile(r"[\u0600-\u06FF]")
+
+
+def _deezer_song(t: dict, albums: dict) -> dict:
+    album = t.get("album") or {}
+    released = albums.get(str(album.get("id")))
+    if album.get("id") and released is None:
+        try:
+            released = albums[str(album["id"])] = common.get(f"{DEEZER}/album/{album['id']}").get("release_date") or ""
+        except common.FetchError:
+            released = ""
+    return {"title": t.get("title_short") or t.get("title"), "artist": (t.get("artist") or {}).get("name"),
+            "album": album.get("title"), "released": released or None, "cover": album.get("cover_medium"),
+            "artist_youtube": None, "deezer": t.get("link"), "rank": t.get("rank") or 0}
+
+
+def _deezer_candidates(albums: dict) -> dict[str, dict]:
+    """genre -> {"dz:<id>": song} from Deezer's charts."""
+    out: dict[str, dict] = {}
+    for gid, genre_id in DEEZER_GENRES.items():
+        try:
+            tracks = common.get(f"{DEEZER}/chart/{genre_id}/tracks", params={"limit": 100}).get("data") or []
+        except common.FetchError as exc:
+            common.log(f"music: deezer {gid}: {exc}")
+            continue
+        out[gid] = {f"dz:{t['id']}": _deezer_song(t, albums) for t in tracks if t.get("id")}
+    try:
+        global_artists = {(t.get("artist") or {}).get("name") for t in
+                          common.get(f"{DEEZER}/chart/0/tracks", params={"limit": 100}).get("data") or []}
+    except common.FetchError:
+        global_artists = set()
+    seen, charts = {}, {}
+    for country, pid in DEEZER_ARAB_CHARTS.items():
+        try:
+            tracks = common.get(f"{DEEZER}/playlist/{pid}/tracks", params={"limit": 100}).get("data") or []
+        except common.FetchError as exc:
+            common.log(f"music: deezer chart {country}: {exc}")
+            continue
+        for t in tracks:
+            artist = (t.get("artist") or {}).get("name") or ""
+            charts.setdefault(artist, set()).add(country)
+            seen[t["id"]] = t
+    arabic = {}
+    for tid, t in seen.items():
+        artist = (t.get("artist") or {}).get("name") or ""
+        if ARABIC_SCRIPT.search(artist + (t.get("title") or "")) or (len(charts.get(artist, ())) >= 2 and artist not in global_artists):
+            arabic[f"dz:{tid}"] = _deezer_song(t, albums)
+    out["arabic"] = arabic
     return out
 
 
@@ -240,7 +302,7 @@ def _lastfm_info(song: dict, key: str, cache: dict, budget: list[int]) -> dict |
     return d
 
 
-YOUTUBE_LOOKUPS = 10      # YouTube searches per day (100 of the 10,000 free daily units each): a last resort; songs are found on the artist's channel instead
+YOUTUBE_LOOKUPS = 20      # YouTube searches per day (100 of the 10,000 free daily units each): a last resort; songs are found on the artist's channel instead
 NOT_OFFICIAL = re.compile(r"\b(cover|karaoke|reaction|tutorial|lesson|instrumental version|8d|slowed|sped up|nightcore)\b", re.I)
 
 
@@ -327,45 +389,84 @@ def _match(song: dict, videos: list[dict]) -> list[dict]:
 _RUN_UPLOADS: dict[str, list[dict]] = {}   # channel id -> its uploads, this run only
 
 
+def _vevo_channel(yt: YouTube, artist: str, cache: dict) -> str | None:
+    """The artist's VEVO channel (where most classic music videos live), by its @handle: 1 unit."""
+    key = "vevo:" + common.norm(artist)
+    if key in cache:
+        return cache[key]
+    base = re.sub(r"[^0-9A-Za-z]", "", artist)
+    cid = None
+    if len(base) >= 3:
+        try:
+            data = yt.get("channels", {"part": "snippet", "forHandle": f"@{base}VEVO"})
+        except common.FetchError:
+            return None      # not cached: tried again on a later day
+        yt.units += 1
+        item = (data.get("items") or [None])[0]
+        title = common.norm((item or {}).get("snippet", {}).get("title", "")).replace(" ", "")
+        if item and "vevo" in title and common.norm(artist).replace(" ", "") in title:
+            cid = item["id"]
+    cache[key] = cid
+    return cid
+
+
+def _channel_videos(yt: YouTube, cid: str, channel_budget: list[int], pages: int) -> list[dict] | None:
+    """A channel's uploads, read once per run (None when YouTube's quota is used up)."""
+    videos = _RUN_UPLOADS.get(cid)
+    if videos is None:
+        channel_budget[0] -= 1
+        vids = yt.uploads(cid, pages=pages)
+        if yt.exhausted:
+            return None
+        # kept for this run only (saving them grew the state file by MBs a day)
+        videos = _RUN_UPLOADS[cid] = [{"id": v["id"], "title": v["title"], "channel": v.get("channel"),
+                                       "published": v.get("published")} for v in vids]
+    return videos
+
+
 def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int], channel_budget: list[int]) -> dict | None:
     """The song's most-viewed official upload: its music video, official audio or the artist's
     auto-generated "Topic" track. Covers, reactions and fan re-uploads don't count.
-    First the artist's own channel (listed by MusicBrainz, else found by its @handle; reading it
-    costs 1-4 quota units), then a YouTube search (100 units) only if that finds nothing."""
+    Looks on the artist's own channel (listed by MusicBrainz, else found by its @handle) and their
+    VEVO channel (1-6 units each). A YouTube search (100 units) is used when neither has the song,
+    or when the best find has under 1M views for a song over a year old (big artists' old videos are
+    often beyond the uploads list), and the most-viewed official upload wins."""
     candidates = []
     url = song.get("artist_youtube")
     if channel_budget[0] > 0 and yt.units < YOUTUBE_CEILING:
         ids = state.setdefault("yt_channel_ids", {})
-        cid = _artist_channel(yt, url, ids) if url else _guess_channel(yt, song["artist"], ids)
-        if cid:
-            # upload lists are kept for this run only (saving them grew the state file by MBs a day);
-            # re-reading a channel on a later day costs just 1-4 units
-            videos = _RUN_UPLOADS.get(cid)
-            if videos is None:
-                channel_budget[0] -= 1
-                vids = yt.uploads(cid, pages=4)
-                if yt.exhausted:
+        for cid, pages in ((_artist_channel(yt, url, ids) if url else _guess_channel(yt, song["artist"], ids), 4),
+                           (_vevo_channel(yt, song["artist"], ids), 6)):
+            if cid:
+                videos = _channel_videos(yt, cid, channel_budget, pages)
+                if videos is None:
                     return "later"
-                videos = _RUN_UPLOADS[cid] = [{"id": v["id"], "title": v["title"], "channel": v.get("channel"),
-                                               "published": v.get("published")} for v in vids]
-            candidates = _match(song, videos)
-    if not candidates:
-        if search_budget[0] <= 0 or yt.exhausted or yt.units >= YOUTUBE_CEILING:
+                candidates += [v for v in _match(song, videos) if v["id"] not in {c["id"] for c in candidates}]
+    stats = _youtube_views(yt, [v["id"] for v in candidates]) if candidates else {}
+    if candidates and yt.exhausted and not stats:
+        return "later"
+    best_views = max((stats.get(v["id"], 0) for v in candidates), default=0)
+    old = (song.get("released") or "0") < (common.now_utc() - timedelta(days=365)).strftime("%Y-%m-%d")
+    if not candidates or (best_views < 1_000_000 and old):
+        if search_budget[0] > 0 and not yt.exhausted and yt.units < YOUTUBE_CEILING:
+            search_budget[0] -= 1
+            found = yt.search(f"{song['artist']} {song['title']}", max_age_days=36500)
+            if yt.exhausted and not candidates:
+                return "later"
+            artist = common.norm(song["artist"])
+            extra = []
+            for v in _match(song, found):
+                channel = common.norm(v.get("channel") or "")
+                if ((artist and (artist in channel or channel.replace(" topic", "") in artist)) or "vevo" in channel) \
+                        and v["id"] not in {c["id"] for c in candidates}:
+                    extra.append(v)
+            if extra:
+                stats.update(_youtube_views(yt, [v["id"] for v in extra]))
+                candidates += extra
+        elif not candidates:
             return "later"
-        search_budget[0] -= 1
-        found = yt.search(f"{song['artist']} {song['title']}", max_age_days=36500)
-        if yt.exhausted:
-            return "later"
-        artist = common.norm(song["artist"])
-        for v in _match(song, found):
-            channel = common.norm(v.get("channel") or "")
-            if (artist and (artist in channel or channel.replace(" topic", "") in artist)) or "vevo" in channel:
-                candidates.append(v)
     if not candidates:
         return None
-    stats = _youtube_views(yt, [v["id"] for v in candidates])
-    if yt.exhausted and not stats:
-        return "later"
     best = max(candidates, key=lambda v: stats.get(v["id"], 0))
     return {"id": best["id"], "title": best["title"], "channel": best.get("channel"), "published": best.get("published")}
 
@@ -433,8 +534,11 @@ def _links(song: dict, apple: dict | None) -> list[dict]:
     links += [
         {"name": "Spotify (search)", "url": f"https://open.spotify.com/search/{q}"},
         {"name": "YouTube Music (search)", "url": f"https://music.youtube.com/search?q={q}"},
-        {"name": "ListenBrainz", "url": f"https://listenbrainz.org/player/?recording_mbids={song['mbid']}"},
     ]
+    if song.get("deezer"):
+        links.append({"name": "Deezer", "url": song["deezer"]})
+    elif not str(song["mbid"]).startswith("dz:"):
+        links.append({"name": "ListenBrainz", "url": f"https://listenbrainz.org/player/?recording_mbids={song['mbid']}"})
     return links
 
 
@@ -457,6 +561,14 @@ def build(yt: YouTube | None = None) -> dict:
         raise RuntimeError("no music candidates fetched")
     _metadata(every, state["meta"])
     pop = _popularity(every)
+    # Deezer chart songs: no MusicBrainz id; Deezer's genre is the membership, its rank the pre-sort
+    dz_meta: dict[str, dict] = {}
+    for gid, songs in _deezer_candidates(state.setdefault("deezer_albums", {})).items():
+        for sid, song in songs.items():
+            dz_meta[sid] = song
+            pools.setdefault(gid, {})[sid] = 1.0
+    common.log(f"music: {sum(len(p) for p in pools.values())} genre candidates (ListenBrainz, MusicBrainz, Last.fm, "
+               f"Deezer {len(dz_meta)})")
     week_chart = _week_chart()
     common.log(f"music: {len(every)} candidate songs, popularity for {len(pop)}")
 
@@ -464,6 +576,14 @@ def build(yt: YouTube | None = None) -> dict:
     state.setdefault("lastfm", {})
     state.setdefault("yt", {})        # song -> its YouTube video (kept for good), or {"none": date} retried after 30 days
     state.setdefault("yt_views", {})  # video id -> {date: views}, last 10 days
+    if not state.get("yt_rechecked"):
+        # one-time (31 Oct 2026): matches under 1M views were often a minor upload of a big song (the
+        # official video sat beyond the uploads list or on a VEVO channel); look those up again
+        for k, v in list(state["yt"].items()):
+            h = state["yt_views"].get(v.get("id") or "", {})
+            if v.get("id") and (h[max(h)] if h else 0) < 1_000_000:
+                del state["yt"][k]
+        state["yt_rechecked"] = True
     year_ago = (now - timedelta(days=365)).strftime("%Y-%m-%d")
     two_years = (now - timedelta(days=730)).strftime("%Y-%m-%d")
 
@@ -477,15 +597,21 @@ def build(yt: YouTube | None = None) -> dict:
     for gid, (name, tags) in GENRES.items():
         seen: dict[str, dict] = {}
         for mbid in pools[gid]:
-            meta, p = state["meta"].get(mbid), pop.get(mbid)
-            if not meta or not meta.get("title") or not meta.get("artist") or not p or p["users"] < 1:
-                continue
-            fit = _fit(meta, tags)
-            if fit <= 0:  # not actually tagged with this genre
-                continue
-            atags = " | ".join(meta.get("atags") or [])
-            if not (re.search(FAMILY[gid], atags) if atags else fit >= STRONG_FIT):
-                continue   # the artist isn't in this genre's family
+            if mbid in dz_meta:   # Deezer chart song: Deezer's own genre decides; its rank pre-sorts
+                meta = dz_meta[mbid]
+                p = {"users": max(1, meta["rank"] // 2000), "listens": 0}
+                fit = 1.0
+            else:
+                # found by any source counts; ListenBrainz listen data is optional (pre-sort only)
+                meta, p = state["meta"].get(mbid), pop.get(mbid) or {"users": 0, "listens": 0}
+                if not meta or not meta.get("title") or not meta.get("artist"):
+                    continue
+                fit = _fit(meta, tags)
+                if fit <= 0:  # not actually tagged with this genre
+                    continue
+                atags = " | ".join(meta.get("atags") or [])
+                if not (re.search(FAMILY[gid], atags) if atags else fit >= STRONG_FIT):
+                    continue   # the artist isn't in this genre's family
             song = {"mbid": mbid, "fit": fit, **meta, **p}
             # one entry per song (remasters, instrumentals and re-releases are separate recordings)
             same = common.norm(meta["artist"] + " " + meta["title"].split(" (")[0]).strip()
@@ -493,7 +619,8 @@ def build(yt: YouTube | None = None) -> dict:
                 seen[same] = song
         songs = list(seen.values())
         if key:
-            wanted = sorted(songs, key=lambda x: -x["users"])[:150] + [x for x in songs if (x.get("released") or "") >= two_years]
+            wanted = (sorted(songs, key=lambda x: -x["users"])[:150] + [x for x in songs if (x.get("released") or "") >= two_years]
+                      + [x for x in songs if x["users"] == 0][:100])   # found by Last.fm/MusicBrainz but not on ListenBrainz
             for x in {id(w): w for w in wanted}.values():
                 info = _lastfm_info(x, key, state["lastfm"], lastfm_budget)
                 if info:
@@ -650,4 +777,5 @@ def build(yt: YouTube | None = None) -> dict:
         state["itunes"] = dict(list(state["itunes"].items())[-6000:])
     state.pop("history", None)
     common.save_json(STATE, state)
-    return {"genres": genres, "sources": ["YouTube (views)", "ListenBrainz / MusicBrainz (genre membership)", "iTunes (artwork, previews)"]}
+    return {"genres": genres, "sources": ["YouTube (views, the only ranking)", "Last.fm, Deezer charts, MusicBrainz, ListenBrainz (genre membership)",
+                                          "iTunes (artwork, previews)"]}
