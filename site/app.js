@@ -279,7 +279,7 @@ async function gaming(parts, q) {
   const list = (g?.[ranking] || []).filter((x) => flags.every((f) => x.flags.includes(f)));
   note([{ all_time: "Best of All Time: 85% quality (critic + weighted user score) + 15% popularity.",
     recent: "Best Recent: released in the last 12 months; 75% quality + 25% popularity.",
-    trending: "Trending: players right now and this week's change; 70% popularity + 30% quality." }[ranking], g?.notes?.platforms].filter(Boolean).join(" "));
+    trending: "Trending: players right now and this week's change; 70% popularity + 30% quality." }[ranking], g?.notes?.stale, g?.notes?.[ranking], g?.notes?.platforms].filter(Boolean).join(" "));
   paint(list, gameCard, gameDetail, flags.length ? "No games match these filters in this list." : "No games here yet.");
   return ["gaming", genre, ranking];
 }

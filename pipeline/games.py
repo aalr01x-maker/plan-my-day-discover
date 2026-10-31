@@ -58,13 +58,34 @@ NOT_GAMES = {"Software", "Utilities", "Design & Illustration", "Animation & Mode
 VIDEOS_PER_RUN = 25
 
 
+SPY_CACHE = common.STATE / "steamspy_tags.json"
+_spy_cache: dict | None = None
+
+
 def _spy_tag(tag: str) -> dict:
-    time.sleep(1.1)
-    try:
-        return common.get(SPY, params={"request": "tag", "tag": tag}, timeout=90) or {}
-    except common.FetchError as exc:
-        common.log(f"games: steamspy tag {tag!r}: {exc}")
-        return {}
+    """SteamSpy's game list for a tag. SteamSpy throttles bursts, so failures wait and retry;
+    if it still fails, the last list fetched (kept in state) is used."""
+    global _spy_cache
+    if _spy_cache is None:
+        _spy_cache = common.load_json(SPY_CACHE, {})
+    for attempt in range(4):
+        time.sleep(1.1 if attempt == 0 else 45)
+        try:
+            data = common.get(SPY, params={"request": "tag", "tag": tag}, timeout=90) or {}
+        except common.FetchError as exc:
+            common.log(f"games: steamspy tag {tag!r} attempt {attempt + 1}: {exc}")
+            continue
+        if data:
+            # keep only what the ranking needs (the full lists are large)
+            slim = {k: {f: v.get(f) for f in ("name", "developer", "positive", "negative", "ccu", "owners")} for k, v in data.items()}
+            _spy_cache[tag] = {"at": common.iso(common.now_utc()), "d": slim}
+            common.save_json(SPY_CACHE, _spy_cache)
+            return slim
+    cached = _spy_cache.get(tag)
+    if cached:
+        common.log(f"games: using SteamSpy {tag!r} list from {cached['at']}")
+        return cached["d"]
+    return {}
 
 
 def _user_score(pos: int, neg: int) -> tuple[float | None, int]:
@@ -206,7 +227,11 @@ def build(yt: YouTube | None = None) -> dict:
             for appid, a in _spy_tag(tag).items():
                 apps[appid] = a
         if not apps:
-            common.log(f"games {gid}: no SteamSpy data")
+            previous = (common.load_json(common.STATE / "last" / "games.json", {}).get("genres") or {}).get(gid)
+            if previous:
+                previous.setdefault("notes", {})["stale"] = f"Steam data unavailable today; showing lists from {previous.get('built_at', 'the last update')}."
+                genres[gid] = previous
+            common.log(f"games {gid}: no SteamSpy data" + ("; kept previous lists" if previous else ""))
             continue
         rows = []
         for appid, a in apps.items():
@@ -352,9 +377,12 @@ def build(yt: YouTube | None = None) -> dict:
             out[ranking] = merged
 
         notes = {}
+        if len(out["recent"]) < 20:
+            notes["recent"] = (f"Only {len(out['recent'])} games in this genre were confirmed as released in the last 12 months "
+                               "from Steam data" + ("." if rawg_key else "; the full list (incl. PS5) arrives with the RAWG key."))
         if not rawg_key:
             notes["platforms"] = "Console platforms (incl. PS5) appear once the RAWG key is added; until then only Steam data is used."
-        genres[gid] = {"name": name, **out, "notes": notes}
+        genres[gid] = {"name": name, **out, "notes": notes, "built_at": common.iso(now)}
         common.log(f"games {gid}: {len(rows)} games; {len(out['all_time'])}/{len(out['recent'])}/{len(out['trending'])}")
 
     # bound state: ccu history 10 days
