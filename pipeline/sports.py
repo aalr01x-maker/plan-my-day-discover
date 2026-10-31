@@ -67,7 +67,9 @@ SPORTS = {
                 "leagues": {"World Snooker Tour": "snooker, wst, open title, masters, uk championship",
                             "Pool": "mosconi, world pool, pool championship"},
                 "feeds": ["https://feeds.bbci.co.uk/sport/snooker/rss.xml"],
-                "channels": ["@WorldSnookerTour", "@MatchroomPool"]},
+                "channels": ["@WorldSnookerTour", "@MatchroomPool"],
+                # WST titles its match videos "A vs B | Event" / "FULL MATCH", not "highlights"
+                "highlight_extra": r" vs | v | full match|final|decider|147|maximum"},
 }
 
 MAJOR = ("wins win won beat beats beaten victory defeat final title champion champions championship crowned record "
@@ -212,7 +214,8 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             for handle, cid in ids.items():
                 for v in yt.uploads(cid):
                     published = common.parse_time(v["published"])
-                    if published and common.within(published, 7 * 24, now) and HIGHLIGHT.search(v["title"]):
+                    if published and common.within(published, 7 * 24, now) and (HIGHLIGHT.search(v["title"]) or (
+                            sport.get("highlight_extra") and re.search(sport["highlight_extra"], v["title"], re.I))):
                         videos.append(v)
             views = _views(yt, [v["id"] for v in videos])
             for v in sorted(videos, key=lambda v: views.get(v["id"], 0), reverse=True)[:12]:

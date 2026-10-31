@@ -55,7 +55,7 @@ TAGS_PER_RUN = 900         # SteamSpy asks for 1 request / second
 TOP_TAGS = 7
 NOT_GAMES = {"Software", "Utilities", "Design & Illustration", "Animation & Modeling", "Video Production",
              "Audio Production", "Photo Editing", "Game Development"}
-VIDEOS_PER_RUN = 25
+VIDEOS_PER_RUN = 15
 
 
 SPY_CACHE = common.STATE / "steamspy_tags.json"
@@ -156,17 +156,23 @@ def _tags(appid: str, cache: dict, budget: list[int]) -> list[str] | None:
         return hit["t"] if hit else None
     tags = data.get("tags") or {}
     top = [t for t, _ in sorted(tags.items(), key=lambda kv: -kv[1])] if isinstance(tags, dict) else []
-    cache[appid] = {"at": common.iso(common.now_utc()), "t": top[:12]}
+    stats = {f: data.get(f) for f in ("name", "developer", "positive", "negative", "ccu", "owners")}
+    cache[appid] = {"at": common.iso(common.now_utc()), "t": top[:12], "a": stats if data.get("name") else None}
     return top[:12]
 
 
-def _rawg(key: str, params: dict, extra: dict) -> list[dict]:
-    try:
-        data = common.get(f"{RAWG}/games", params={"key": key, "page_size": 40, **params, **extra})
-    except common.FetchError as exc:
-        common.log(f"games: rawg {params}: {exc}")
-        return []
-    return data.get("results") or []
+def _rawg(key: str, params: dict, extra: dict, pages: int = 2) -> list[dict]:
+    out = []
+    for page in range(1, pages + 1):
+        try:
+            data = common.get(f"{RAWG}/games", params={"key": key, "page_size": 40, "page": page, **params, **extra})
+        except common.FetchError as exc:
+            common.log(f"games: rawg {params}: {exc}")
+            break
+        out += data.get("results") or []
+        if not data.get("next"):
+            break
+    return out
 
 
 def _rawg_card(g: dict, weight_q: float, max_added: int, flags_from: list) -> dict | None:
@@ -226,6 +232,18 @@ def build(yt: YouTube | None = None) -> dict:
         for tag in tags:
             for appid, a in _spy_tag(tag).items():
                 apps[appid] = a
+        if not apps:
+            # SteamSpy's genre lists are unavailable: start from Steam's own charts instead
+            # (genre still verified per game below); RAWG fills All-time and Recent.
+            for appid in set(most_played) | set(two_weeks):
+                a = two_weeks.get(appid)
+                if not a:
+                    _tags(appid, state["tags"], tbudget)
+                    a = (state["tags"].get(appid) or {}).get("a")
+                if a:
+                    apps[appid] = a
+            if apps:
+                common.log(f"games {gid}: SteamSpy genre list unavailable; using {len(apps)} Steam chart games + RAWG")
         if not apps:
             previous = (common.load_json(common.STATE / "last" / "games.json", {}).get("genres") or {}).get(gid)
             if previous:

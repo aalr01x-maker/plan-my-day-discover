@@ -48,7 +48,7 @@ GENRES = {
 PER_ARTIST = 2            # a list shows at most 2 songs by one artist
 TAG_LEVELS = {"recording": 1.0, "release_group": 0.8, "artist": 0.6}
 ITUNES_PER_RUN = 150      # Apple asks for ~20 requests/minute; the cache fills over a few days
-VIDEOS_PER_RUN = 30       # YouTube search = 100 quota units each; cached for good
+VIDEOS_PER_RUN = 15       # YouTube search = 100 quota units each (10,000/day); cached for good
 
 
 def _candidates() -> dict[str, dict]:
