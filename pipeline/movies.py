@@ -55,9 +55,9 @@ BAYES_M = {"movie": 2000, "tv": 500}
 IMDB_MIN_VOTES = {"movie": {"all_time": 25000, "recent": 1000, "trending": 500},
                   "tv": {"all_time": 5000, "recent": 300, "trending": 200}}
 IMDB_BAYES_M = {"movie": 25000, "tv": 5000}
-# Best Recent shows only titles rated 7.5+ (owner, 31 Oct 2026), on IMDb's scale when IMDb has
-# the title; a shorter list is fine.
-RECENT_MIN_RATING = {"movie": 7.5, "tv": 7.5}
+# Every list (All Time, Best Recent, Trending) shows only titles rated 7.5+ (owner, 31 Oct 2026), on
+# IMDb's scale when IMDb has the title; a shorter list is fine.
+MIN_RATING = {"movie": 7.5, "tv": 7.5}
 # Niche tabs: far fewer people rate these, so Best Recent accepts fewer votes (still 7.5+, still
 # vote-weighted). Otherwise e.g. a new anime film rated 8.9 by 300 people could never appear.
 NICHE = {"anime", "experimental", "documentary", "adult-animation"}
@@ -273,9 +273,10 @@ def build() -> dict:
                 "recent": [] if tab in NO_RECENT else _discover(tmdb, media, {
                     **base, date_from: year_ago, date_to: today, "sort_by": "popularity.desc",
                     **({"first_air_date.gte": tv_started} if media == "tv" else {}),
-                    "vote_count.gte": _min_votes(media, "recent", tab, False), "vote_average.gte": RECENT_MIN_RATING[media] - 1.0}, 3),
+                    "vote_count.gte": _min_votes(media, "recent", tab, False), "vote_average.gte": MIN_RATING[media] - 1.0}, 3),
                 "trending": _discover(tmdb, media, {**base, "sort_by": "popularity.desc",
-                                                   "vote_count.gte": MIN_VOTES[media]["trending"]}, 2),
+                                                   "vote_count.gte": MIN_VOTES[media]["trending"],
+                                                   "vote_average.gte": MIN_RATING[media] - 1.0}, 4),
             }
             # TMDB's weekly trending list, kept only where it matches this tab's discover results
             tab_ids = {t["id"] for p in pools.values() for t in p}
@@ -297,7 +298,7 @@ def build() -> dict:
                     floor_votes = _min_votes(media, ranking, tab, t["_src"] == "IMDb")
                     if t["_votes"] < floor_votes:
                         continue
-                    if ranking == "recent" and t["_rating"] < RECENT_MIN_RATING[media]:
+                    if t["_rating"] < MIN_RATING[media]:
                         continue
                     rows.append(t)
                 if not rows:
@@ -363,7 +364,11 @@ def build() -> dict:
                 notes["recent"] = f"Classics are older titles by definition, so there are no recent releases here. Try Best of All Time or Trending."
             elif len(cards["recent"]) < LIMIT[media]:
                 notes["recent"] = (f"Only {len(cards['recent'])} {name} {kind} from the last 12 months{' (premiered in the last 5 years)' if media == 'tv' else ''} are rated "
-                                   f"{RECENT_MIN_RATING[media]:.1f}+, so the list is shorter instead of padded with weaker titles.")
+                                   f"{MIN_RATING[media]:.1f}+, so the list is shorter instead of padded with weaker titles.")
+            for ranking, what in (("all_time", "of all time"), ("trending", "popular right now")):
+                if len(cards[ranking]) < LIMIT[media]:
+                    notes[ranking] = (f"Only {len(cards[ranking])} {name} {kind} {what} are rated {MIN_RATING[media]:.1f}+, "
+                                      f"so the list is shorter instead of padded with weaker titles.")
             out[media][tab] = {"name": name, **cards, "notes": notes}
             common.log(f"movies {media}/{tab}: {len(cards['all_time'])}/{len(cards['recent'])}/{len(cards['trending'])}")
 

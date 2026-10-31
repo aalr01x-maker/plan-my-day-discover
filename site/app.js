@@ -126,7 +126,7 @@ function note(text, label = "Ranked by") {
 /* Centered section header + what the whole section is ranked by */
 const ABOUT = {
   news: "Stories are grouped across BBC, Reuters, AP, Al Jazeera, DW, France 24 and CNBC, then ranked by how many independent outlets confirm them (35%), significance (30%), recency (20%) and source reliability (15%). Duplicates are merged into one story.",
-  movies: "Ranked from IMDb ratings (TMDB only where IMDb has none) and popularity. Ratings are weighted by number of votes, so a title with a few votes can't top the list; each ranking mixes quality and popularity differently.",
+  movies: "Ranked from IMDb ratings (TMDB only where IMDb has none) and popularity. Every list shows only titles rated 7.5+ out of 10. Ratings are weighted by number of votes, so a title with a few votes can't top the list; each ranking mixes quality and popularity differently.",
   gaming: "Ranked from Metacritic critic scores and Steam user reviews (weighted by how many people reviewed), plus popularity. Player and review counts are Steam's own; games not on Steam show the critic score only, as Sony and Nintendo publish no player numbers.",
   music: "Ranked by real listening: YouTube views of the official upload (artist channel, VEVO or Topic), plus how strongly MusicBrainz tags each song with the genre. Songs have no public quality ratings, so only measurable signals count.",
   sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
@@ -312,10 +312,10 @@ async function movies(parts) {
   ]);
   $("filters").innerHTML = "";
   heading("movies", [label(MEDIA, media), genre && set[genre].name, label(RANKINGS, ranking)]);
-  note(`${genre ? set[genre].name + " " : ""}${media === "tv" ? "TV shows" : "movies"}: ` + { all_time: "Best of All Time: 85% rating quality (weighted by vote count) + 15% popularity.",
+  note(`${genre ? set[genre].name + " " : ""}${media === "tv" ? "TV shows" : "movies"}: ` + { all_time: "Best of All Time: rated 7.5+; 85% rating quality (weighted by vote count) + 15% popularity.",
     recent: media === "tv" ? "Best Recent: shows that premiered in the last 5 years with episodes in the last 12 months (new seasons count), rated 7.5+; 75% quality + 25% popularity."
       : "Best Recent: released in the last 12 months, rated 7.5+; 75% quality + 25% popularity.",
-    trending: "Trending: last 7 days on TMDB; 70% popularity + 30% quality." }[ranking] +
+    trending: "Trending: popular in the last 7 days on TMDB, rated 7.5+; 70% popularity + 30% quality." }[ranking] +
     (genre && set[genre].notes?.[ranking] ? " " + set[genre].notes[ranking] : "") +
     ` Streaming shown for ${data.watch_region === "KW" ? "Kuwait" : data.watch_region} where listed.`);
   paint(genre ? set[genre][ranking] : [], movieCard, movieDetail, "No titles here yet.");
