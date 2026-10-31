@@ -351,11 +351,12 @@ def build(yt: YouTube | None = None) -> dict:
             if rawg:
                 platforms = sorted({p["platform"]["name"] for p in rawg.get("platforms") or []} | {"PC"})
             video = state["videos"].get(r["appid"])
-            if video is None and yt and yt.available and rank <= 5 and vbudget[0] > 0:
+            if video is None and yt and yt.available and not yt.exhausted and rank <= 5 and vbudget[0] > 0:
                 vbudget[0] -= 1
                 found = yt.search(f"{r['name']} official trailer", max_age_days=3650)
-                state["videos"][r["appid"]] = video = embed(best_match(f"{r['name']} official trailer", None, found,
-                                                                       min_similarity=0.3)) or {}
+                video = embed(best_match(f"{r['name']} official trailer", None, found, min_similarity=0.3)) or {}
+                if not yt.exhausted:   # a refused search isn't "no trailer"; try again another day
+                    state["videos"][r["appid"]] = video
             return {
                 "id": r["appid"], "rank": rank, "title": d.get("name") or r["name"], "developer": r["developer"],
                 "released": d.get("released"), "image": d.get("image"),
