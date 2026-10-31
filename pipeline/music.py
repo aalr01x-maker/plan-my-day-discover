@@ -330,8 +330,8 @@ NOT_OFFICIAL = re.compile(r"\b(cover|karaoke|reaction|tutorial|lesson|instrument
 
 
 SKIP_VERSION = re.compile(r"\b(live|remix|edit|teaser|trailer|behind the scenes|interview|making of|snippet|visualiser|visualizer)\b", re.I)
-CHANNELS_PER_RUN = 1000   # artist channels read per day (1-4 quota units each; the 7,000-unit ceiling still applies)
-YOUTUBE_CEILING = 7000     # music stops new lookups once the run has used this many of the 10,000 daily units (YouTube sells no extra quota)
+CHANNELS_PER_RUN = 2000   # artist channels read per day (1-6 quota units each; the ceiling still applies)
+YOUTUBE_CEILING = 9300     # music runs last, so it may use the daily allowance up to here (10,000 total; YouTube sells no extra)
 
 
 def _artist_channel(yt: YouTube, url: str, cache: dict) -> str | None:
