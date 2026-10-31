@@ -30,6 +30,8 @@ import re
 import time
 from datetime import datetime, timedelta
 
+import requests
+
 from . import common
 from .youtube import YouTube, best_match, embed
 
@@ -113,12 +115,39 @@ def _details(appid: str, cache: dict, budget: list[int]) -> dict | None:
     return d
 
 
+_STEAM_REVIEWS = {"blocked": False, "used": 0}
+
+
+def _steam_reviews(appid: str) -> tuple[int, int] | None:
+    """Positive/negative review totals from Steam's own review endpoint. SteamSpy no longer counts
+    reviews for new games (they show 0), so this fills them in. Stops for the run if Steam refuses."""
+    if _STEAM_REVIEWS["blocked"]:
+        return None
+    status, q = "error", None
+    try:
+        r = requests.get(f"{STORE.rsplit('/api', 1)[0]}/appreviews/{appid}",
+                         params={"json": 1, "language": "all", "purchase_type": "all", "num_per_page": 0, "filter": "summary"},
+                         headers=common.UA, timeout=20, allow_redirects=False)
+        status = r.status_code
+        q = r.json().get("query_summary") if r.status_code == 200 else None
+    except (requests.RequestException, ValueError):
+        pass
+    if not q:
+        _STEAM_REVIEWS["blocked"] = True
+        common.log(f"games: Steam review counts unavailable (HTTP {status}); new games keep SteamSpy's")
+        return None
+    _STEAM_REVIEWS["used"] += 1
+    time.sleep(0.4)
+    return int(q.get("total_positive") or 0), int(q.get("total_negative") or 0)
+
+
 def _tags(appid: str, cache: dict, budget: list[int]) -> list[str] | None:
     """The game's top player tags (most votes first) and review numbers, cached 30 days, or 5 days
     for games with under 5,000 reviews (new games' review counts grow fast)."""
     hit = cache.get(appid)
     a = (hit or {}).get("a") or {}
-    ttl = 30 if int(a.get("positive") or 0) + int(a.get("negative") or 0) >= 5000 else 5
+    n = int(a.get("positive") or 0) + int(a.get("negative") or 0)
+    ttl = 30 if n >= 5000 else 5 if n else 0   # 0 reviews: SteamSpy's gap for new games, ask again
     # entries cached before review numbers were kept ("a") are refreshed
     if hit and "a" in hit and common.within(common.parse_time(hit["at"]), ttl * 24):
         return hit["t"]
@@ -134,6 +163,10 @@ def _tags(appid: str, cache: dict, budget: list[int]) -> list[str] | None:
     tags = data.get("tags") or {}
     top = [t for t, _ in sorted(tags.items(), key=lambda kv: -kv[1])] if isinstance(tags, dict) else []
     stats = {f: data.get(f) for f in ("name", "developer", "positive", "negative", "ccu", "owners")}
+    if data.get("name") and not (int(stats.get("positive") or 0) + int(stats.get("negative") or 0)):
+        counts = _steam_reviews(appid)   # SteamSpy shows 0 reviews for new games
+        if counts:
+            stats["positive"], stats["negative"] = counts
     cache[appid] = {"at": common.iso(common.now_utc()), "t": top[:12], "a": stats if data.get("name") else None}
     return top[:12]
 

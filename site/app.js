@@ -126,7 +126,7 @@ function note(text, label = "Ranked by") {
 /* Centered section header + what the whole section is ranked by */
 const ABOUT = {
   news: "Stories are grouped across BBC, Reuters, AP, Al Jazeera, DW, France 24 and CNBC, then ranked by how many independent outlets confirm them (35%), significance (30%), recency (20%) and source reliability (15%). Duplicates are merged into one story.",
-  movies: "Ranked from IMDb ratings (TMDB only where IMDb has none) and popularity. Every list shows only titles rated 7.5+ out of 10. Ratings are weighted by number of votes, so a title with a few votes can't top the list; each ranking mixes quality and popularity differently.",
+  movies: "Everything comes from IMDb: which titles exist, their genres, ratings and votes. Every list shows only titles rated 7.5+ out of 10, and ratings are weighted by number of votes, so a title with a few votes can't top the list.",
   gaming: "Ranked only by Steam player reviews (weighted by how many people reviewed) plus popularity on Steam. Every review and player count is Steam's own; games not sold on Steam (Nintendo and PlayStation exclusives) aren't listed.",
   music: "Ranked only by YouTube: views of each song's official upload (artist channel, VEVO or Topic). Last.fm, Deezer charts and MusicBrainz only decide which genre a song belongs to, never its rank.",
   sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
@@ -134,7 +134,7 @@ const ABOUT = {
 /* Where each section's facts come from, shown in a banner under its title */
 const SOURCES = {
   news: "BBC, Reuters, AP, Al Jazeera, DW, France 24, CNBC, ABC News Australia, RNZ and The Guardian. Every story links to the original reports; AI only writes the short summary.",
-  movies: "IMDb (ratings and vote counts, from IMDb's official daily data), TMDB (titles, posters, trailers) and JustWatch via TMDB (where to stream).",
+  movies: "IMDb's official daily data (titles, genres, ratings and votes). TMDB only adds posters, trailers and where to stream (JustWatch), and says which titles are anime or superhero.",
   gaming: "Steam (official player reviews, live player counts and charts) and RAWG (to find games in each genre and which consoles they're also on).",
   music: "YouTube (view counts of each song's official video or audio: the only ranking), Last.fm, Deezer's streaming charts, MusicBrainz and ListenBrainz (which songs belong to each genre) and Apple's iTunes (artwork and previews).",
   sports: "Official league YouTube channels (Premier League, NBA, NFL, UFC, Formula 1 and more), BBC Sport, ESPN, Yahoo Sports, CBS Sports, Motorsport.com, HLTV, The Guardian, and each league's established outlets.",
@@ -313,15 +313,15 @@ async function movies(parts) {
   $("filters").innerHTML = "";
   heading("movies", [label(MEDIA, media), genre && set[genre].name, label(RANKINGS, ranking)]);
   note(`${genre ? set[genre].name + " " : ""}${media === "tv" ? "TV shows" : "movies"}: ` + { all_time: "Best of All Time: rated 7.5+; ordered by IMDb rating, like IMDb's Top Rated (titles with few votes are weighted down so they can't jump to the top).",
-    recent: media === "tv" ? "Best Recent: shows that premiered in the last 5 years with episodes in the last 12 months (new seasons count), rated 7.5+; 75% quality + 25% popularity."
-      : "Best Recent: released in the last 12 months, rated 7.5+; 75% quality + 25% popularity.",
-    trending: "Trending: popular in the last 7 days on TMDB, rated 7.5+; 70% popularity + 30% quality." }[ranking] +
+    recent: media === "tv" ? "Best Recent: shows that premiered in the last 5 years with new episodes this year or last year, rated 7.5+; 75% IMDb rating + 25% IMDb votes."
+      : "Best Recent: released this year or last year, rated 7.5+; 75% IMDb rating + 25% IMDb votes.",
+    trending: "Trending: most IMDb votes gained per day this week, rated 7.5+; 70% votes gained + 30% IMDb rating." }[ranking] +
     (genre && set[genre].notes?.[ranking] ? " " + set[genre].notes[ranking] : "") +
     ` Streaming shown for ${data.watch_region === "KW" ? "Kuwait" : data.watch_region} where listed.`);
   paint(genre ? set[genre][ranking] : [], movieCard, movieDetail, "No titles here yet.");
   return ["movies", media, genre, ranking];
 }
-const ratingOf = (m) => m.rating.value ?? m.rating.tmdb ?? 0;
+const ratingOf = (m) => m.rating.value ?? 0;
 function movieCard(m) {
   const stream = m.watch?.stream?.length ? `Stream: ${m.watch.stream.slice(0, 2).join(", ")}${m.watch.region !== "KW" ? " (US)" : ""}` : "";
   return `<article class="card" tabindex="0" data-item="${esc(m.id)}"><div class="media-row">${img(m.poster, "thumb poster", "")}
@@ -337,7 +337,7 @@ function movieDetail(m) {
   return `<div class="detail"><h2 id="sheetTitle">${esc(m.title)} <span class="meta">(${esc(m.year)})</span></h2>
     <div class="split">${img(m.poster, "", m.title)}<div>
     <div class="scores"><span class="score">${esc(m.rating.source)} <b>${ratingOf(m).toFixed(1)}</b>/10</span><span class="score">${num(m.rating.votes)} votes</span>
-    ${m.rating.source === "IMDb" && m.rating.tmdb ? `<span class="score">TMDB ${m.rating.tmdb.toFixed(1)}</span>` : ""}</div>
+    </div>
     <div class="meta">${esc((m.genres || []).join(", "))} · ${m.released ? "Released " + kuwait(m.released, false) : ""}
     ${m.seasons_count ? ` · ${m.seasons_count} season${m.seasons_count > 1 ? "s" : ""} · ${esc(m.status || "")}` : ""}</div>
     <p>${esc(m.overview)}</p></div></div>
