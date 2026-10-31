@@ -168,11 +168,10 @@ async function showMeta(section) {
   } else st.hidden = true;
 }
 
-/* ---------- location banner: daily update at 12:00 noon where the owner is ---------- */
+/* ---------- location banner: show every time in the viewer's local time ---------- */
 // Stays at the top until location is allowed. The coordinates themselves are never read or sent: once
-// allowed, the time zone the device sets from its location is used, and only that zone name goes into
-// the owner's GitHub issue link.
-const REPO = "https://github.com/aalr01x-maker/plan-my-day-discover";
+// allowed, the time zone the device sets from its location is used. The daily update itself is fixed
+// at 12:00 noon Kuwait (09:00 UTC), the best single time for Kuwait, Europe, East Asia and the US.
 let locating = false;
 function locate(prompt) {
   if (!navigator.geolocation || locating) return;
@@ -193,9 +192,9 @@ function locate(prompt) {
 }
 function bannerHtml(html) { const b = $("locBanner"); b.hidden = false; b.innerHTML = `<div class="banner-in">${html}</div>`; }
 function bannerAsk(blocked, extra = "") {
-  bannerHtml(`<p><b>📍 Allow location so this site updates every day at 12:00 noon where you are.</b></p>
+  bannerHtml(`<p><b>📍 Allow location to see every time on this site in your local time.</b></p>
     <p>Only your time zone is used; your exact location is never sent or stored anywhere.
-    Times on the site also switch to your local time.</p>
+    The site updates every day at 12:00 noon Kuwait time (09:00 UTC).</p>
     ${blocked ? `<p class="warn-text">Location is blocked for this site. Allow it in your browser's site settings, then tap the button.</p>` : ""}
     ${extra ? `<p class="warn-text">${esc(extra)}</p>` : ""}
     <button id="locBtn" class="banner-btn">Allow location</button>`);
@@ -209,18 +208,7 @@ async function locationBanner() {
   if (perm === "denied") return bannerAsk(true);
   if (!allowed) return bannerAsk(false);
   if (!locating && !locationBanner.checked) { locationBanner.checked = true; locate(false); }   // travelling: re-check once per visit
-  const tz = viewerTz();
-  const sched = meta?.schedule?.tz || "Asia/Kuwait";
-  if (tz === sched) { $("locBanner").hidden = true; return; }
-  if (store.get("tzRequested") === tz) {
-    return bannerHtml(`<p>🕛 Moving the daily update to 12:00 noon ${esc(city(tz))} time. It applies from the next update; this note goes away then.</p>`);
-  }
-  const title = encodeURIComponent(`Set update time zone: ${tz}`);
-  const body = encodeURIComponent("Sent from the Discover site's location banner. Just tap Create (or Submit); the site's robot sets the time and closes this.");
-  bannerHtml(`<p><b>🕛 You're on ${esc(city(tz))} time; the daily update is at 12:00 noon ${esc(city(sched))} time.</b></p>
-    <p>Site owner: tap below, then Create on GitHub, to move it to 12:00 noon here. If today's noon here has passed without an update, one runs right away.</p>
-    <a id="tzMove" class="banner-btn" href="${REPO}/issues/new?title=${title}&body=${body}" target="_blank" rel="noopener">Move update to 12:00 ${esc(city(tz))} time</a>`);
-  $("tzMove").onclick = () => { store.set("tzRequested", tz); setTimeout(locationBanner, 500); };
+  $("locBanner").hidden = true;
 }
 
 /* ---------- cards ---------- */

@@ -1,34 +1,9 @@
 name: Daily refresh
 
 on:
-  # One trigger per hour; the job below runs only on the one that is 12:00 noon in the owner's
-  # time zone (repo variable UPDATE_CRON, set by timezone.yml from the site's location banner).
-  # The other 23 are skipped before a runner starts, so they use no Actions minutes.
   schedule:
-    - cron: "0 0 * * *"
-    - cron: "0 1 * * *"
-    - cron: "0 2 * * *"
-    - cron: "0 3 * * *"
-    - cron: "0 4 * * *"
-    - cron: "0 5 * * *"
-    - cron: "0 6 * * *"
-    - cron: "0 7 * * *"
-    - cron: "0 8 * * *"
-    - cron: "0 9 * * *"
-    - cron: "0 10 * * *"
-    - cron: "0 11 * * *"
-    - cron: "0 12 * * *"
-    - cron: "0 13 * * *"
-    - cron: "0 14 * * *"
-    - cron: "0 15 * * *"
-    - cron: "0 16 * * *"
-    - cron: "0 17 * * *"
-    - cron: "0 18 * * *"
-    - cron: "0 19 * * *"
-    - cron: "0 20 * * *"
-    - cron: "0 21 * * *"
-    - cron: "0 22 * * *"
-    - cron: "0 23 * * *"
+    - cron: "0 9 * * *"        # 09:00 UTC = 12:00 noon Kuwait: after US night games and European evening matches
+                               # finish, just after YouTube's daily quota reset; Europe gets it in the morning
   workflow_dispatch:
     inputs:
       sections:
@@ -45,7 +20,6 @@ concurrency:
 
 jobs:
   refresh:
-    if: github.event_name != 'schedule' || github.event.schedule == (vars.UPDATE_CRON || '0 9 * * *')
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
@@ -78,7 +52,6 @@ jobs:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
           RAWG_API_KEY: ${{ secrets.RAWG_API_KEY }}
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
-          UPDATE_TZ: ${{ vars.UPDATE_TZ || 'Asia/Kuwait' }}
         run: python -m pipeline ${{ github.event.inputs.sections }}
 
       - name: Save state branch
@@ -103,16 +76,6 @@ jobs:
           npx --yes firebase-tools@14 deploy --only hosting --project plan-my-day-4ba6b --non-interactive \
             -m "daily refresh ${{ github.run_id }}"
           rm -f "$RUNNER_TEMP/sa.json"
-
-      - name: Keep the update at 12:00 local (daylight-saving changes)
-        if: always()
-        env:
-          GH_TOKEN: ${{ secrets.SCHEDULE_TOKEN }}
-          UPDATE_TZ: ${{ vars.UPDATE_TZ || 'Asia/Kuwait' }}
-        run: |
-          [ -n "$GH_TOKEN" ] || { echo "No SCHEDULE_TOKEN secret; schedule unchanged"; exit 0; }
-          cron=$(python scripts/schedule.py cron "$UPDATE_TZ" --tomorrow)
-          [ "$cron" = "${{ vars.UPDATE_CRON }}" ] || gh variable set UPDATE_CRON -R "${{ github.repository }}" -b "$cron"
 
       - name: Run summary
         if: always()
