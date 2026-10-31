@@ -198,7 +198,7 @@ def _lastfm_info(song: dict, key: str, cache: dict, budget: list[int]) -> dict |
     return d
 
 
-YOUTUBE_LOOKUPS = 40      # YouTube searches per day (100 of the 10,000 free daily units each); most songs are found on the artist's channel instead
+YOUTUBE_LOOKUPS = 10      # YouTube searches per day (100 of the 10,000 free daily units each): a last resort; songs are found on the artist's channel instead
 NOT_OFFICIAL = re.compile(r"\b(cover|karaoke|reaction|tutorial|lesson|instrumental version|8d|slowed|sped up|nightcore)\b", re.I)
 
 
@@ -231,6 +231,33 @@ def _artist_channel(yt: YouTube, url: str, cache: dict) -> str | None:
     return cid
 
 
+def _guess_channel(yt: YouTube, artist: str, cache: dict) -> str | None:
+    """The artist's channel when MusicBrainz lists none: try @Name, @NameOfficial and @NameVEVO
+    (1 quota unit each, instead of a 100-unit search) and accept one only if its title is the artist
+    and it has 10,000+ subscribers (not a fan or impostor account)."""
+    key = "guess:" + common.norm(artist)
+    if key in cache:
+        return cache[key]
+    base = re.sub(r"[^0-9A-Za-z]", "", artist)
+    want = common.norm(artist).replace(" ", "")
+    cid = None
+    for handle in ([f"@{base}", f"@{base}Official", f"@{base}VEVO"] if len(base) >= 3 else []):
+        try:
+            data = yt.get("channels", {"part": "snippet,statistics", "forHandle": handle})
+        except common.FetchError:
+            return None      # not cached: tried again on a later day
+        yt.units += 1
+        item = (data.get("items") or [None])[0]
+        title = common.norm((item or {}).get("snippet", {}).get("title", "")).replace(" ", "")
+        stats = (item or {}).get("statistics", {})
+        big = stats.get("hiddenSubscriberCount") or int(stats.get("subscriberCount", 0)) >= 10_000
+        if item and big and title.replace("official", "").replace("vevo", "") == want:
+            cid = item["id"]
+            break
+    cache[key] = cid
+    return cid
+
+
 def _todo(entry: dict | None, now) -> bool:
     """Not looked up yet, or found nothing more than 30 days ago (worth another try)."""
     if entry is None:
@@ -258,12 +285,13 @@ def _match(song: dict, videos: list[dict]) -> list[dict]:
 def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int], channel_budget: list[int]) -> dict | None:
     """The song's most-viewed official upload: its music video, official audio or the artist's
     auto-generated "Topic" track. Covers, reactions and fan re-uploads don't count.
-    First the artist's own channel (MusicBrainz lists it; reading it costs 1-4 quota units),
-    then a YouTube search (100 units) only if that finds nothing."""
+    First the artist's own channel (listed by MusicBrainz, else found by its @handle; reading it
+    costs 1-4 quota units), then a YouTube search (100 units) only if that finds nothing."""
     candidates = []
     url = song.get("artist_youtube")
-    if url and channel_budget[0] > 0 and yt.units < YOUTUBE_CEILING:
-        cid = _artist_channel(yt, url, state.setdefault("yt_channel_ids", {}))
+    if channel_budget[0] > 0 and yt.units < YOUTUBE_CEILING:
+        ids = state.setdefault("yt_channel_ids", {})
+        cid = _artist_channel(yt, url, ids) if url else _guess_channel(yt, song["artist"], ids)
         if cid:
             uploads = state.setdefault("yt_uploads", {})
             hit = uploads.get(cid)

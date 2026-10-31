@@ -393,8 +393,9 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                 elif yt and yt.available:
                     found = []
                     for q in HIGHLIGHT_QUERIES.get(league, []) + [f"{LEAGUE_NEWS.get(sport_id, {}).get(league, league)} highlights"]:
-                        # search results are dated on the card; up to a year back for leagues between seasons
-                        found = _big_channels(yt, [v for v in yt.search(q, after=now - timedelta(days=365), max_age_days=1,
+                        # search results are dated on the card; up to a year back for leagues between seasons;
+                        # each search is reused for 7 days (100 quota units each)
+                        found = _big_channels(yt, [v for v in yt.search(q, after=now - timedelta(days=365), max_age_days=7,
                                                                         max_results=10)
                                                    if HIGHLIGHT.search(v["title"])])
                         if found:
