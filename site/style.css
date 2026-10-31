@@ -117,3 +117,12 @@ table.mini td, table.mini th { border-bottom: 1px solid var(--line); padding: 5p
   .updated { font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) { .skeleton::after { animation: none; } * { scroll-behavior: auto !important; } }
+
+.page-head { text-align: center; padding: 18px 16px 0; max-width: 820px; margin: 0 auto; }
+.page-head h1 { margin: 0; font-size: 26px; line-height: 1.2; letter-spacing: -0.01em; }
+.page-sub { margin: 4px 0 0; color: var(--accent); font-weight: 600; font-size: 15px; }
+.page-sub:empty, .about:empty { display: none; }
+.about { margin: 10px 0 0; color: var(--muted); font-size: 13px; }
+.about b, .note b { color: var(--text); }
+.tabs { justify-content: safe center; }
+.subtabs, .filters { justify-content: safe center; }

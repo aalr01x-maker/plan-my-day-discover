@@ -110,7 +110,27 @@ function chips(items, selected, onToggle) {
     onToggle(b.dataset.id);
   };
 }
-function note(text) { const n = $("note"); n.hidden = !text; n.textContent = text || ""; }
+function note(text, label = "Ranked by") {
+  const n = $("note"); n.hidden = !text;
+  n.innerHTML = text ? (label ? `<b>${esc(label)}:</b> ` : "") + esc(text) : "";
+}
+
+/* Centered section header + what the whole section is ranked by */
+const ABOUT = {
+  news: "Stories are grouped across BBC, Reuters, AP, Al Jazeera, DW, France 24 and CNBC, then ranked by how many independent outlets confirm them (35%), significance (30%), recency (20%) and source reliability (15%). Duplicates are merged into one story.",
+  movies: "Ranked from TMDB ratings and popularity. Ratings are weighted by number of votes, so a title with a few votes can't top the list; each ranking mixes quality and popularity differently.",
+  gaming: "Ranked from critic scores (Metacritic) and user ratings (Steam reviews or RAWG), weighted by how many people rated, plus popularity. Critic and user scores are always shown separately.",
+  music: "Ranked from real listening data (ListenBrainz listeners and plays) and how strongly MusicBrainz tags each song with the genre. Songs have no public quality ratings, so only measurable signals count.",
+  sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
+};
+function heading(section, crumbs) {
+  const s = SECTIONS.find((x) => x.id === section);
+  $("pageTitle").textContent = s ? `${s.icon} ${s.name}` : "Search";
+  $("pageSub").textContent = crumbs.filter(Boolean).join(" · ");
+  $("sectionAbout").innerHTML = ABOUT[section] ? `<b>How this section is ranked:</b> ${esc(ABOUT[section])}` : "";
+  document.title = [crumbs.filter(Boolean).join(" · "), s?.name, "Discover"].filter(Boolean).join(" – ");
+}
+const label = (pairs, id) => (pairs.find(([k]) => k === id) || [, ""])[1];
 function skeleton(n = 6) { $("content").innerHTML = Array.from({ length: n }, () => '<div class="skeleton"></div>').join(""); }
 function empty(text) { $("content").innerHTML = `<p class="empty">${esc(text)}</p>`; }
 
@@ -187,8 +207,11 @@ async function news(parts, q) {
   tabsRow($("tabs"), tabs, tab, (id) => go(["news", id, period], null));
   segGroups([{ label: "Period", items: NEWS_PERIODS, selected: period, onPick: (id) => go(["news", tab, id], null) }]);
   $("filters").innerHTML = "";
-  note(`Ranked by how many independent outlets confirm a story, its significance, recency and source reliability. ` +
-    `${num(data.article_count)} articles from ${data.outlets.length} outlets were compared.`);
+  heading("news", [data.regions[tab].name, label(NEWS_PERIODS, period)]);
+  note(`${data.regions[tab].name} stories from the ${period === "today" ? "last 24 hours" : "last 7 days"}` +
+    (tab === "business" ? " about business, the economy, markets and companies" : tab === "world" ? " from every region" : "") +
+    `, ranked by outlets confirming it, significance, recency and source reliability. ` +
+    `${num(data.article_count)} articles from ${data.outlets.length} outlets were compared today.`);
   paint(data.regions[tab][period], newsCard, newsDetail, "No major stories in this window yet.");
   return [`news`, tab, period];
 }
@@ -226,7 +249,8 @@ async function movies(parts) {
     { label: "Ranking", items: RANKINGS, selected: ranking, onPick: (id) => go(["movies", media, genre, id], null) },
   ]);
   $("filters").innerHTML = "";
-  note({ all_time: "Best of All Time: 85% rating quality (weighted by vote count) + 15% popularity.",
+  heading("movies", [label(MEDIA, media), genre && set[genre].name, label(RANKINGS, ranking)]);
+  note(`${genre ? set[genre].name + " " : ""}${media === "tv" ? "TV shows" : "movies"}: ` + { all_time: "Best of All Time: 85% rating quality (weighted by vote count) + 15% popularity.",
     recent: media === "tv" ? "Best Recent: shows with episodes aired in the last 12 months (new seasons count); 75% quality + 25% popularity."
       : "Best Recent: released in the last 12 months; 75% quality + 25% popularity.",
     trending: "Trending: last 7 days on TMDB; 70% popularity + 30% quality." }[ranking] +
@@ -277,7 +301,8 @@ async function gaming(parts, q) {
   });
   const g = data.genres[genre];
   const list = (g?.[ranking] || []).filter((x) => flags.every((f) => x.flags.includes(f)));
-  note([{ all_time: "Best of All Time: 85% quality (critic + weighted user score) + 15% popularity.",
+  heading("gaming", [g?.name, label(RANKINGS, ranking), ...flags.map((f) => f[0].toUpperCase() + f.slice(1))]);
+  note([`${g?.name || ""} games:`, { all_time: "Best of All Time: 85% quality (critic + weighted user score) + 15% popularity.",
     recent: "Best Recent: released in the last 12 months; 75% quality + 25% popularity.",
     trending: "Trending: players right now and this week's change; 70% popularity + 30% quality." }[ranking], g?.notes?.stale, g?.notes?.[ranking], g?.notes?.platforms].filter(Boolean).join(" "));
   paint(list, gameCard, gameDetail, flags.length ? "No games match these filters in this list." : "No games here yet.");
@@ -287,7 +312,8 @@ const flagQ = (flags) => { const q = new URLSearchParams(); if (flags.length) q.
 function scoreBadges(x) {
   return `<div class="scores">${x.critic ? `<span class="score">Critic <b>${x.critic.score}</b></span>` : `<span class="score">Critic –</span>`}
     ${x.user.score != null ? `<span class="score">Users <b>${Math.round(x.user.score)}%</b> · ${num(x.user.reviews)}</span>` : `<span class="score">Users –</span>`}
-    <span class="badge ${x.user.confidence === "high" ? "good" : x.user.confidence === "low" ? "warn" : ""}">${esc(x.user.confidence)} confidence</span></div>`;
+    ${!x.critic && x.user.score == null ? '<span class="badge">no scores yet</span>'
+      : `<span class="badge ${x.user.confidence === "high" ? "good" : x.user.confidence === "low" ? "warn" : ""}">${esc(x.user.confidence)} confidence</span>`}</div>`;
 }
 function gameCard(x) {
   return `<article class="card" tabindex="0" data-item="${esc(x.id)}">${img(x.image, "thumb", "")}
@@ -317,9 +343,11 @@ async function music(parts) {
   segGroups([{ label: "Ranking", items: RANKINGS, selected: ranking, onPick: (id) => go(["music", genre, id], null) }]);
   $("filters").innerHTML = "";
   const g = data.genres[genre];
-  note(g?.notes?.[ranking] || { all_time: "Best of All Time: listeners (85%) and how strongly the song is tagged with this genre (15%).",
+  heading("music", [g?.name, label(RANKINGS, ranking)]);
+  note(`${g?.name || ""}: ` + ({ all_time: "Best of All Time: listeners (85%) and how strongly the song is tagged with this genre (15%).",
     recent: "Best Recent: released in the last 12 months; listeners 75% + genre fit 25%.",
-    trending: "Trending: growth in listens over the last 7 days (70%) + listeners (30%)." }[ranking]);
+    trending: "Trending: growth in listens over the last 7 days (70%) + listeners (30%)." }[ranking]) +
+    (g?.notes?.[ranking] ? " " + g.notes[ranking] : ""));
   paint(g?.[ranking] || [], songCard, songDetail, "No songs here yet.");
   return ["music", genre, ranking];
 }
@@ -355,7 +383,8 @@ async function sports(parts, q) {
   segGroups([{ label: "View", items: SPORT_VIEWS, selected: view, onPick: (id) => go(["sports", sport, id], lq(league)) }]);
   chips([["", "All leagues"], ...s.leagues.map((l) => [l, l])], [league], (id) => go(["sports", sport, view], lq(id), true));
   const list = s[view].filter((x) => !league || x.league === league);
-  note({ highlights: "Official highlight videos from league channels in the last 7 days, most watched first.",
+  heading("sports", [s.name, league || "", label(SPORT_VIEWS, view)]);
+  note(`${s.name}${league ? " · " + league : ""}: ` + { highlights: "Official highlight videos from league channels in the last 7 days, most watched first.",
     results: "The week's biggest results and events: results, titles, records and major incidents first, confirmed by more outlets.",
     latest: "Newest reports from the last 24 hours." }[view] + (view === "highlights" && !s.highlights.length ? " Highlights appear once the YouTube connection is active." : ""));
   paint(list, view === "highlights" ? highlightCard : sportCard, view === "highlights" ? highlightDetail : sportDetail,
@@ -385,7 +414,8 @@ function sportDetail(e) {
 async function search(parts, q) {
   const term = (q.get("q") || "").trim();
   $("tabs").innerHTML = ""; $("subtabs").innerHTML = ""; $("filters").innerHTML = "";
-  note(term ? `Results for “${term}” across all sections.` : "Type in the search box and press Enter.");
+  heading("search", [term && `“${term}”`]);
+  note(term ? `Results for “${term}” across all sections.` : "Type in the search box and press Enter.", "");
   if (!term) { empty(""); return ["search"]; }
   const t = term.toLowerCase();
   const hit = (o) => JSON.stringify(o).toLowerCase().includes(t);
