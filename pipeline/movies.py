@@ -32,11 +32,16 @@ FALLBACK_REGION = "US"
 # values are resolved to TMDB keyword ids at run time (no hard-coded guesses).
 TABS = {
     "action": ("Action", {"with_genres": "28", "without_genres": "16"}, {"with_genres": "10759", "without_genres": "16"}),
+    "adventure": ("Adventure", {"with_genres": "12", "without_genres": "16"},
+                  {"with_keywords": "kw:adventure", "without_genres": "16"}),
     "anime": ("Anime", {"with_genres": "16", "with_original_language": "ja"}, {"with_genres": "16", "with_original_language": "ja"}),
     "comedy": ("Comedy", {"with_genres": "35", "without_genres": "16,99"}, {"with_genres": "35", "without_genres": "16,99,10767,10764"}),
     "crime-drama": ("Crime & Drama", {"with_genres": "80|18", "without_genres": "16,99"}, {"with_genres": "80|18", "without_genres": "16,99,10766"}),
-    "horror": ("Horror", {"with_genres": "27", "without_genres": "16"}, {"with_keywords": "kw:horror", "without_genres": "16"}),
-    "thriller": ("Thriller", {"with_genres": "53", "without_genres": "16"}, {"with_genres": "9648", "without_genres": "16"}),
+    "horror-thriller": ("Horror & Thriller", {"with_genres": "27|53", "without_genres": "16"},
+                        {"with_keywords": "kw:horror|kw:thriller|kw:psychological thriller", "without_genres": "16"}),
+    "superhero": ("Superhero", {"with_keywords": "kw:superhero"}, {"with_keywords": "kw:superhero"}),
+    "biography": ("Biography", {"with_keywords": "kw:biography", "without_genres": "99"},
+                  {"with_keywords": "kw:biography", "without_genres": "99"}),
     "scifi-fantasy": ("Sci-Fi & Fantasy", {"with_genres": "878|14", "without_genres": "16"}, {"with_genres": "10765", "without_genres": "16"}),
     "romance": ("Romance", {"with_genres": "10749", "without_genres": "16"}, {"with_keywords": "kw:romance", "without_genres": "16"}),
     "western-historical": ("Western & Historical", {"with_genres": "37|36|10752", "without_genres": "16"},
