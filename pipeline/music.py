@@ -47,6 +47,21 @@ GENRES = {
     "retrowave": ("Retrowave", ["synthwave", "retrowave", "outrun"]),
     "nu-disco": ("Nu-Disco / Chill Dance", ["nu disco", "nu-disco", "disco house"]),
     "conscious-rap": ("Conscious Rap / Mellow Vocal Hip-Hop", ["conscious hip hop", "jazz rap", "alternative hip hop"]),
+    # added 31 Oct 2026 (owner)
+    "rap": ("Rap", ["hip hop", "rap", "east coast hip hop", "west coast hip hop"]),
+    "rock": ("Rock", ["rock", "classic rock", "hard rock", "alternative rock"]),
+    "rnb": ("R&B", ["r&b", "contemporary r&b", "neo soul", "rhythm and blues"]),
+    "edm-techno": ("EDM & Techno", ["edm", "techno", "electro house", "big room", "melodic techno"]),
+    "country": ("Country", ["country", "country pop", "contemporary country", "americana"]),
+    "jazz": ("Jazz", ["jazz", "vocal jazz", "cool jazz", "bebop", "smooth jazz"]),
+    "classical": ("Classical", ["classical", "baroque", "modern classical", "contemporary classical", "romantic classical"]),
+    "blues": ("Blues", ["blues", "blues rock", "electric blues", "delta blues"]),
+    "reggae": ("Reggae", ["reggae", "roots reggae", "dancehall", "dub"]),
+    "indie": ("Indie", ["indie", "indie rock", "indie pop", "indie folk"]),
+    "alternative": ("Alternative", ["alternative rock", "alternative", "alternative pop", "grunge"]),
+    "house": ("House", ["house", "deep house", "tech house", "french house"]),
+    "trap": ("Trap", ["trap", "trap rap", "drill"]),
+    "arabic": ("Arabic", ["arabic", "arabic pop", "khaleeji", "rai", "egyptian", "lebanese"]),
 }
 # The artist must belong to the genre's family too (their own MusicBrainz tags), so one stray tag
 # can't put a pop song under Progressive House. Artists with no tags at all need a strong song tag.
@@ -59,12 +74,26 @@ FAMILY = {
     "retrowave": r"synthwave|retrowave|outrun|darksynth|vaporwave|synth",
     "nu-disco": r"disco|house|funk|dance|electro ?pop",
     "conscious-rap": r"hip ?hop|rap",
+    "rap": r"hip ?hop|rap",
+    "rock": r"rock|grunge|punk|metal",
+    "rnb": r"r&b|rnb|soul|rhythm and blues",
+    "edm-techno": r"edm|techno|house|electro|dance|trance|dubstep",
+    "country": r"country|americana|bluegrass",
+    "jazz": r"jazz|swing|bebop|bop",
+    "classical": r"classical|baroque|orchestra|opera|composer|romantic|piano|chamber music|symphon",
+    "blues": r"blues",
+    "reggae": r"reggae|dancehall|dub|ska",
+    "indie": r"indie",
+    "alternative": r"alternative|grunge|indie|post punk|rock",
+    "house": r"house",
+    "trap": r"trap|drill|hip ?hop|rap",
+    "arabic": r"arab|khaleeji|rai|egypt|leban|middle east|shaabi|levant|gulf|syria|iraq|saudi|kuwait|morocc|algeri|tunisi",
 }
 STRONG_FIT = 0.8
 
 PER_ARTIST = 2            # a list shows at most 2 songs by one artist
 TAG_LEVELS = {"recording": 1.0, "release_group": 0.8, "artist": 0.6}
-ITUNES_PER_RUN = 150      # Apple asks for ~20 requests/minute; the cache fills over a few days
+ITUNES_PER_RUN = 250      # Apple asks for ~20 requests/minute; the cache fills over a few days
 
 
 def _candidates() -> dict[str, dict]:
@@ -218,7 +247,7 @@ NOT_OFFICIAL = re.compile(r"\b(cover|karaoke|reaction|tutorial|lesson|instrument
 
 
 SKIP_VERSION = re.compile(r"\b(live|remix|edit|teaser|trailer|behind the scenes|interview|making of|snippet|visualiser|visualizer)\b", re.I)
-CHANNELS_PER_RUN = 500    # artist channels read per day (1-4 quota units each)
+CHANNELS_PER_RUN = 1000   # artist channels read per day (1-4 quota units each; the 7,000-unit ceiling still applies)
 YOUTUBE_CEILING = 7000     # music stops new lookups once the run has used this many of the 10,000 daily units (YouTube sells no extra quota)
 
 
