@@ -38,7 +38,8 @@ class Budget(unittest.TestCase):
         b.data = {b.month: {"usd": 1.0}}
         self.assertTrue(b.allows(prompt_chars=30000, max_tokens=4000))
 
-    def test_no_call_over_cap(self):
+    @mock.patch.object(common, "log")
+    def test_no_call_over_cap(self, _log):
         with mock.patch.dict("os.environ", {"ANTHROPIC_API_KEY": "x"}):
             a = ai.AI()
         a.cache = {}

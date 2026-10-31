@@ -27,11 +27,13 @@ SPORTS = {
                "channels": ["@premierleague", "@LaLiga", "@bundesliga", "@ChampionsLeague"]},
     "basketball": {"name": "Basketball", "icon": "🏀",
                    "leagues": {"NBA": "nba, lakers, celtics, warriors, knicks, thunder, nuggets", "EuroLeague": "euroleague", "CBA": "cba, chinese basketball association"},
-                   "feeds": ["https://www.espn.com/espn/rss/nba/news", "https://feeds.bbci.co.uk/sport/basketball/rss.xml"],
+                   "feeds": ["https://www.espn.com/espn/rss/nba/news", "https://feeds.bbci.co.uk/sport/basketball/rss.xml",
+                             "https://sports.yahoo.com/nba/rss.xml", "https://www.cbssports.com/rss/headlines/nba/"],
                    "channels": ["@NBA", "@Euroleague"]},
     "american-football": {"name": "American Football", "icon": "🏈",
                           "leagues": {"NFL": "nfl, packers, chiefs, eagles, cowboys, patriots, 49ers, super bowl", "CFL": "cfl, grey cup", "UFL": "ufl"},
-                          "feeds": ["https://www.espn.com/espn/rss/nfl/news", "https://feeds.bbci.co.uk/sport/american-football/rss.xml"],
+                          "feeds": ["https://www.espn.com/espn/rss/nfl/news", "https://feeds.bbci.co.uk/sport/american-football/rss.xml",
+                                    "https://sports.yahoo.com/nfl/rss.xml", "https://www.cbssports.com/rss/headlines/nfl/"],
                           "channels": ["@NFL", "@CFL"]},
     "cricket": {"name": "Cricket", "icon": "🏏",
                 "leagues": {"IPL": "ipl, indian premier league", "BBL": "bbl, big bash", "PSL": "psl, pakistan super league",
@@ -40,15 +42,17 @@ SPORTS = {
                 "channels": ["@IPL", "@cricketcomau", "@ICC"]},
     "mma": {"name": "MMA", "icon": "🥋",
             "leagues": {"UFC": "ufc", "ONE Championship": "one championship", "PFL": "pfl, bellator"},
-            "feeds": ["https://feeds.bbci.co.uk/sport/mixed-martial-arts/rss.xml", "https://www.espn.com/espn/rss/mma/news"],
+            "feeds": ["https://feeds.bbci.co.uk/sport/mixed-martial-arts/rss.xml", "https://www.espn.com/espn/rss/mma/news",
+                      "https://sports.yahoo.com/mma/rss.xml", "https://www.cbssports.com/rss/headlines/mma/"],
             "channels": ["@UFC", "@ONEChampionship", "@PFLMMA"]},
     "motorsports": {"name": "Motorsports", "icon": "🏎️",
                     "leagues": {"Formula 1": "f1, formula one, formula 1, grand prix", "NASCAR": "nascar", "IndyCar": "indycar, indy 500"},
-                    "feeds": ["https://feeds.bbci.co.uk/sport/formula1/rss.xml", "https://www.espn.com/espn/rss/rpm/news"],
+                    "feeds": ["https://feeds.bbci.co.uk/sport/formula1/rss.xml", "https://www.espn.com/espn/rss/rpm/news",
+                              "https://www.motorsport.com/rss/f1/news/"],
                     "channels": ["@Formula1", "@NASCAR", "@IndyCar"]},
     "baseball": {"name": "Baseball", "icon": "⚾",
                  "leagues": {"MLB": "mlb, world series, yankees, dodgers, red sox", "NPB": "npb, japan series", "KBO": "kbo, korean series"},
-                 "feeds": ["https://www.espn.com/espn/rss/mlb/news"],
+                 "feeds": ["https://www.espn.com/espn/rss/mlb/news", "https://sports.yahoo.com/mlb/rss.xml", "https://www.cbssports.com/rss/headlines/mlb/"],
                  "channels": ["@MLB"]},
     "esports": {"name": "Esports", "icon": "🎮",
                 "leagues": {"League of Legends": "league of legends, lol worlds, lck, lpl, lec, lta", "Counter-Strike": "counter strike, cs2, blast, iem, esl pro league, pgl, major",
@@ -57,16 +61,18 @@ SPORTS = {
                 "channels": ["@lolesports", "@ESLCS", "@VALORANTEsports"]},
     "hockey": {"name": "Hockey", "icon": "🏒",
                "leagues": {"NHL": "nhl, stanley cup", "KHL": "khl", "IIHF": "iihf, ice hockey world championship"},
-               "feeds": ["https://www.espn.com/espn/rss/nhl/news", "https://feeds.bbci.co.uk/sport/ice-hockey/rss.xml"],
+               "feeds": ["https://www.espn.com/espn/rss/nhl/news", "https://feeds.bbci.co.uk/sport/ice-hockey/rss.xml",
+                         "https://sports.yahoo.com/nhl/rss.xml", "https://www.cbssports.com/rss/headlines/nhl/"],
                "channels": ["@NHL", "@IIHFHockey"]},
     "boxing": {"name": "Boxing", "icon": "🥊",
                "leagues": {"World titles": "wbc, wba, ibf, wbo, world title, undisputed, title fight"},
-               "feeds": ["https://feeds.bbci.co.uk/sport/boxing/rss.xml", "https://www.espn.com/espn/rss/boxing/news"],
+               "feeds": ["https://feeds.bbci.co.uk/sport/boxing/rss.xml", "https://www.espn.com/espn/rss/boxing/news",
+                         "https://sports.yahoo.com/boxing/rss.xml", "https://www.cbssports.com/rss/headlines/boxing/"],
                "channels": ["@MatchroomBoxing", "@TopRankBoxing", "@DAZNBoxing"]},
     "snooker": {"name": "Snooker / Billiards", "icon": "🎱",
                 "leagues": {"World Snooker Tour": "snooker, wst, open title, masters, uk championship",
                             "Pool": "mosconi, world pool, pool championship"},
-                "feeds": ["https://feeds.bbci.co.uk/sport/snooker/rss.xml"],
+                "feeds": ["https://feeds.bbci.co.uk/sport/snooker/rss.xml", "https://www.theguardian.com/sport/snooker/rss"],
                 "channels": ["@WorldSnookerTour", "@MatchroomPool"],
                 # WST titles its match videos "A vs B | Event" / "FULL MATCH", not "highlights"
                 "highlight_extra": r" vs | v | full match|final|decider|147|maximum"},
@@ -80,8 +86,12 @@ NOISE = ("preview predictions picks odds fantasy rankings podcast quiz how to wa
 SOURCE_TIER = {"BBC Sport": 0.95, "ESPN": 0.95, "HLTV": 0.85}
 
 
+SOURCES = {"bbc": "BBC Sport", "espn": "ESPN", "hltv": "HLTV", "yahoo": "Yahoo Sports", "cbssports": "CBS Sports",
+           "motorsport.com": "Motorsport.com", "theguardian": "The Guardian"}
+
+
 def _source(url: str) -> str:
-    return "BBC Sport" if "bbc" in url else "ESPN" if "espn" in url else "HLTV" if "hltv" in url else "Source"
+    return next((name for key, name in SOURCES.items() if key in url), "Source")
 
 
 def _league(text: str, sport: dict, default: str | None = None) -> str | None:
@@ -102,6 +112,8 @@ def _items(sport_id: str, sport: dict, now) -> list[dict]:
         except common.FetchError as exc:
             common.log(f"sports feed failed ({sport_id}): {exc}")
             continue
+        if not parsed.entries:  # some publishers answer cloud servers with an empty page
+            common.log(f"sports feed empty ({sport_id}): {_source(url)}")
         for e in parsed.entries:
             published = common.parse_time(e.get("published_parsed") or e.get("published"))
             title = common.strip_html(e.get("title", ""))
