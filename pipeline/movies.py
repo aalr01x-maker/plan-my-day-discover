@@ -58,6 +58,18 @@ IMDB_BAYES_M = {"movie": 25000, "tv": 5000}
 # Best Recent shows only titles rated 7.5+ (owner, 31 Oct 2026), on IMDb's scale when IMDb has
 # the title; a shorter list is fine.
 RECENT_MIN_RATING = {"movie": 7.5, "tv": 7.5}
+# Niche tabs: far fewer people rate these, so Best Recent accepts fewer votes (still 7.5+, still
+# vote-weighted). Otherwise e.g. a new anime film rated 8.9 by 300 people could never appear.
+NICHE = {"anime", "experimental", "documentary", "adult-animation"}
+NICHE_RECENT_VOTES = {"movie": {"tmdb": 10, "imdb": 200}, "tv": {"tmdb": 8, "imdb": 100}}
+
+
+def _min_votes(media: str, ranking: str, tab: str, imdb_scale: bool) -> int:
+    if ranking == "recent" and tab in NICHE:
+        return NICHE_RECENT_VOTES[media]["imdb" if imdb_scale else "tmdb"]
+    return (IMDB_MIN_VOTES if imdb_scale else MIN_VOTES)[media][ranking]
+
+
 NO_RECENT = {"classic"}   # pre-1990 / pre-2000 by definition: no releases in the last 12 months
 LIMIT = {"movie": 20, "tv": 20}
 WEIGHTS = {"all_time": 0.85, "recent": 0.75, "trending": 0.30}
@@ -261,7 +273,7 @@ def build() -> dict:
                 "recent": [] if tab in NO_RECENT else _discover(tmdb, media, {
                     **base, date_from: year_ago, date_to: today, "sort_by": "popularity.desc",
                     **({"first_air_date.gte": tv_started} if media == "tv" else {}),
-                    "vote_count.gte": MIN_VOTES[media]["recent"], "vote_average.gte": RECENT_MIN_RATING[media] - 1.0}, 3),
+                    "vote_count.gte": _min_votes(media, "recent", tab, False), "vote_average.gte": RECENT_MIN_RATING[media] - 1.0}, 3),
                 "trending": _discover(tmdb, media, {**base, "sort_by": "popularity.desc",
                                                    "vote_count.gte": MIN_VOTES[media]["trending"]}, 2),
             }
@@ -274,7 +286,7 @@ def build() -> dict:
             for ranking, pool in pools.items():
                 seen, rows = set(), []
                 for t in pool:
-                    if t["id"] in seen or (t.get("vote_count") or 0) < MIN_VOTES[media][ranking]:
+                    if t["id"] in seen or (t.get("vote_count") or 0) < _min_votes(media, ranking, tab, False):
                         continue
                     seen.add(t["id"])
                     if "_rating" not in t:
@@ -282,7 +294,7 @@ def build() -> dict:
                         r = imdb.rating(t["_imdb"])
                         t["_rating"], t["_votes"], t["_src"] = r + ("IMDb",) if r else \
                             (t.get("vote_average") or 0, t.get("vote_count") or 0, "TMDB")
-                    floor_votes = (IMDB_MIN_VOTES if t["_src"] == "IMDb" else MIN_VOTES)[media][ranking]
+                    floor_votes = _min_votes(media, ranking, tab, t["_src"] == "IMDb")
                     if t["_votes"] < floor_votes:
                         continue
                     if ranking == "recent" and t["_rating"] < RECENT_MIN_RATING[media]:
