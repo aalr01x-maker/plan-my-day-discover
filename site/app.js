@@ -312,7 +312,7 @@ async function movies(parts) {
   ]);
   $("filters").innerHTML = "";
   heading("movies", [label(MEDIA, media), genre && set[genre].name, label(RANKINGS, ranking)]);
-  note(`${genre ? set[genre].name + " " : ""}${media === "tv" ? "TV shows" : "movies"}: ` + { all_time: "Best of All Time: rated 7.5+; 85% rating quality (weighted by vote count) + 15% popularity.",
+  note(`${genre ? set[genre].name + " " : ""}${media === "tv" ? "TV shows" : "movies"}: ` + { all_time: "Best of All Time: rated 7.5+; ordered by IMDb rating, like IMDb's Top Rated (titles with few votes are weighted down so they can't jump to the top).",
     recent: media === "tv" ? "Best Recent: shows that premiered in the last 5 years with episodes in the last 12 months (new seasons count), rated 7.5+; 75% quality + 25% popularity."
       : "Best Recent: released in the last 12 months, rated 7.5+; 75% quality + 25% popularity.",
     trending: "Trending: popular in the last 7 days on TMDB, rated 7.5+; 70% popularity + 30% quality." }[ranking] +

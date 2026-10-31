@@ -2,7 +2,7 @@
 
 Source: TMDB (TMDB_TOKEN, the v4 "API Read Access Token"). Rankings are never mixed:
 
-  Best of All Time   85% quality + 15% popularity
+  Best of All Time   IMDb rating only (vote-weighted), like IMDb Top Rated
   Best Recent        75% quality + 25% popularity -- movies released in the last
                      12 months; TV shows with episodes aired in the last 12 months
                      (so new seasons of older shows count)
@@ -92,7 +92,7 @@ def _min_votes(media: str, ranking: str, tab: str, imdb_scale: bool, factor: flo
 
 NO_RECENT = {"classic"}   # pre-1990 / pre-2000 by definition: no releases in the last 12 months
 LIMIT = {"movie": 20, "tv": 20}
-WEIGHTS = {"all_time": 0.85, "recent": 0.75, "trending": 0.30}
+WEIGHTS = {"all_time": 1.0, "recent": 0.75, "trending": 0.30}   # all time: rating only, like IMDb Top Rated (owner)
 
 
 DETAIL_FIELDS = ("id", "title", "name", "release_date", "first_air_date", "overview", "poster_path", "genres",
