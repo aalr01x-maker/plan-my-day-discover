@@ -252,7 +252,7 @@ async function movies(parts) {
   $("filters").innerHTML = "";
   heading("movies", [label(MEDIA, media), genre && set[genre].name, label(RANKINGS, ranking)]);
   note(`${genre ? set[genre].name + " " : ""}${media === "tv" ? "TV shows" : "movies"}: ` + { all_time: "Best of All Time: 85% rating quality (weighted by vote count) + 15% popularity.",
-    recent: media === "tv" ? "Best Recent: shows with episodes aired in the last 12 months (new seasons count), rated 7.5+; 75% quality + 25% popularity."
+    recent: media === "tv" ? "Best Recent: shows that premiered in the last 5 years with episodes in the last 12 months (new seasons count), rated 7.5+; 75% quality + 25% popularity."
       : "Best Recent: released in the last 12 months, rated 7.5+; 75% quality + 25% popularity.",
     trending: "Trending: last 7 days on TMDB; 70% popularity + 30% quality." }[ranking] +
     (genre && set[genre].notes?.[ranking] ? " " + set[genre].notes[ranking] : "") +

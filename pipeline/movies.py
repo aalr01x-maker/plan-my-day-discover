@@ -227,6 +227,9 @@ def build() -> dict:
         raise RuntimeError("TMDB_TOKEN not set")
     now = common.now_utc()
     year_ago = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+    # TV Best Recent: shows that premiered in the last 5 years with episodes in the last 12 months
+    # (so a new season of a 25-year-old procedural doesn't count as recent)
+    tv_started = (now - timedelta(days=5 * 365)).strftime("%Y-%m-%d")
     today = now.strftime("%Y-%m-%d")
     state = common.load_json(STATE, {"tmdb": {}})
     tmdb = TMDB(token, state["tmdb"])
@@ -257,6 +260,7 @@ def build() -> dict:
                 # TMDB pre-filter a point below the bar: IMDb and TMDB ratings differ, IMDb decides
                 "recent": [] if tab in NO_RECENT else _discover(tmdb, media, {
                     **base, date_from: year_ago, date_to: today, "sort_by": "popularity.desc",
+                    **({"first_air_date.gte": tv_started} if media == "tv" else {}),
                     "vote_count.gte": MIN_VOTES[media]["recent"], "vote_average.gte": RECENT_MIN_RATING[media] - 1.0}, 3),
                 "trending": _discover(tmdb, media, {**base, "sort_by": "popularity.desc",
                                                    "vote_count.gte": MIN_VOTES[media]["trending"]}, 2),
@@ -320,7 +324,7 @@ def build() -> dict:
                     released = d.get("release_date") or d.get("first_air_date")
                     why = (f"{t['_src']} {t['_rating']:.1f}/10 from {t['_votes']:,} votes (weighted for vote count)"
                            + {"all_time": "", "recent": f"; released {released}" if media == "movie"
-                              else f"; episodes aired since {year_ago}",
+                              else f"; premiered {released}, episodes aired since {year_ago}",
                               "trending": f"; #{week_rank[t['id']] + 1} on TMDB's weekly trending {media} list"
                               if t["id"] in week_rank else "; high TMDB popularity this week"}[ranking] + ".")
                     card = {
@@ -346,7 +350,7 @@ def build() -> dict:
             if tab in NO_RECENT:
                 notes["recent"] = f"Classics are older titles by definition, so there are no recent releases here. Try Best of All Time or Trending."
             elif len(cards["recent"]) < LIMIT[media]:
-                notes["recent"] = (f"Only {len(cards['recent'])} {name} {kind} from the last 12 months are rated "
+                notes["recent"] = (f"Only {len(cards['recent'])} {name} {kind} from the last 12 months{' (premiered in the last 5 years)' if media == 'tv' else ''} are rated "
                                    f"{RECENT_MIN_RATING[media]:.1f}+, so the list is shorter instead of padded with weaker titles.")
             out[media][tab] = {"name": name, **cards, "notes": notes}
             common.log(f"movies {media}/{tab}: {len(cards['all_time'])}/{len(cards['recent'])}/{len(cards['trending'])}")
