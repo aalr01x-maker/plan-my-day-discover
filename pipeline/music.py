@@ -78,14 +78,14 @@ FAMILY = {
     "edm-techno": r"edm|techno|house|electro|dance|trance|dubstep",
     "country": r"country|americana|bluegrass",
     "jazz": r"jazz|swing|bebop|bop",
-    "classical": r"classical|baroque|orchestra|opera|composer|romantic|piano|chamber music|symphon",
+    "classical": r"classical|baroque|orchestra|\bopera\b|composer|chamber music|symphon",
     "blues": r"blues",
-    "reggae": r"reggae|dancehall|dub|ska",
+    "reggae": r"reggae|dancehall|\bdub\b|\bska\b|rocksteady",
     "indie": r"indie",
     "alternative": r"alternative|grunge|indie|post punk|rock",
     "house": r"house",
     "trap": r"trap|drill|hip ?hop|rap",
-    "arabic": r"arab|khaleeji|rai|egypt|leban|middle east|shaabi|levant|gulf|syria|iraq|saudi|kuwait|morocc|algeri|tunisi",
+    "arabic": r"arab|khaleeji|\brai\b|egypt|leban|middle east|shaabi|mahraganat|levant|syria|iraq|saudi|kuwait|morocc|algeri|tunisi",
 }
 STRONG_FIT = 0.8
 
@@ -170,6 +170,26 @@ DEEZER_ARAB_CHARTS = {"Egypt": 1362501615, "Saudi Arabia": 1362521285, "Morocco"
 ARABIC_SCRIPT = re.compile(r"[\u0600-\u06FF]")
 
 
+LASTFM_ARTIST_TAGS_PER_RUN = 800
+
+
+def _artist_tags_lastfm(artist: str, key: str | None, cache: dict, budget: list[int]) -> str | None:
+    """An artist's top Last.fm tags joined by " | " (cached 60 days); None if unknown."""
+    hit = cache.get(artist)
+    if hit and common.within(common.parse_time(hit["at"]), 60 * 24):
+        return hit["t"]
+    if not key or budget[0] <= 0:
+        return None
+    budget[0] -= 1
+    try:
+        data = common.get(LASTFM, params={"method": "artist.gettoptags", "artist": artist, "api_key": key, "format": "json"})
+    except common.FetchError:
+        return None
+    tags = [t.get("name", "").lower().replace("-", " ") for t in ((data.get("toptags") or {}).get("tag") or [])[:12]]
+    cache[artist] = {"at": common.iso(common.now_utc()), "t": " | ".join(tags)}
+    return cache[artist]["t"]
+
+
 def _deezer_song(t: dict, albums: dict) -> dict:
     album = t.get("album") or {}
     released = albums.get(str(album.get("id")))
@@ -212,7 +232,8 @@ def _deezer_candidates(albums: dict) -> dict[str, dict]:
     arabic = {}
     for tid, t in seen.items():
         artist = (t.get("artist") or {}).get("name") or ""
-        if ARABIC_SCRIPT.search(artist + (t.get("title") or "")) or (len(charts.get(artist, ())) >= 2 and artist not in global_artists):
+        if ARABIC_SCRIPT.search(artist + (t.get("title") or "")) or (len(charts.get(artist, ())) >= 1 and artist not in global_artists):
+            # candidates only: the artist check in build() keeps just Arabic artists
             arabic[f"dz:{tid}"] = _deezer_song(t, albums)
     out["arabic"] = arabic
     return out
@@ -563,8 +584,15 @@ def build(yt: YouTube | None = None) -> dict:
     pop = _popularity(every)
     # Deezer chart songs: no MusicBrainz id; Deezer's genre is the membership, its rank the pre-sort
     dz_meta: dict[str, dict] = {}
+    artist_tags, tag_budget = state.setdefault("lfm_artist_tags", {}), [LASTFM_ARTIST_TAGS_PER_RUN]
     for gid, songs in _deezer_candidates(state.setdefault("deezer_albums", {})).items():
         for sid, song in songs.items():
+            # Deezer's genre labels are loose: the artist must be in the genre's family on Last.fm too
+            # (Arabic-script names count as Arabic)
+            if not (gid == "arabic" and ARABIC_SCRIPT.search(song["artist"] or "")):
+                tags = _artist_tags_lastfm(song["artist"], key, artist_tags, tag_budget)
+                if tags is None or not re.search(FAMILY[gid], tags):
+                    continue
             dz_meta[sid] = song
             pools.setdefault(gid, {})[sid] = 1.0
     common.log(f"music: {sum(len(p) for p in pools.values())} genre candidates (ListenBrainz, MusicBrainz, Last.fm, "
