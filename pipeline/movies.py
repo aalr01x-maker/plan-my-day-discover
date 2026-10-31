@@ -47,7 +47,9 @@ TABS = {
     "experimental": ("Experimental & Other", {"member": ({"with_keywords": "kw:experimental film|kw:surrealism|kw:avant-garde"},
                                                          {"with_keywords": "kw:surrealism|kw:anthology"})}),
     "classic": ("Classic / OG", {"classic": True, "animation_ok": True}),
-    "adult-animation": ("Adult Animation", {"adult_animation": True}),
+    "adult-animation": ("Adult Animation", {"adult_animation": True,
+                                            "member": ({"with_genres": "16", "with_keywords": "kw:adult animation"},
+                                                       {"with_genres": "16", "with_keywords": "kw:adult animation"})}),
 }
 ANIME_TMDB = {"with_genres": "16", "with_original_language": "ja"}
 # vote minimums on IMDb's scale; niche tabs need fewer, and every list steps them down (never the
@@ -249,7 +251,10 @@ def _members(tmdb: TMDB, media: str, raw: dict, pages: int = 10) -> set[str]:
     if params is None:
         return set()
     ids = set()
-    for t in _discover(tmdb, media, {**params, "sort_by": "vote_count.desc"}, pages):
+    # the most-voted titles plus what's popular now (so new releases are included too)
+    seen = {t["id"]: t for sort in ("vote_count.desc", "popularity.desc")
+            for t in _discover(tmdb, media, {**params, "sort_by": sort}, pages if sort == "vote_count.desc" else 5)}
+    for t in seen.values():
         iid = _imdb_id(tmdb, media, t["id"])
         if iid:
             ids.add(iid)
@@ -302,8 +307,8 @@ def build() -> dict:
                 anime = t["japanese"] or iid in anime_ids[media]
                 if rule.get("anime"):
                     return "Animation" in g and anime
-                if rule.get("adult_animation"):
-                    return "Animation" in g and not anime and "Family" not in g
+                if rule.get("adult_animation"):   # IMDb has no "adult" label for animation: TMDB's list decides
+                    return "Animation" in g and not anime and "Family" not in g and iid in (members or set())
                 if "Animation" in g and not rule.get("animation_ok"):
                     return False
                 if members is not None:
