@@ -34,12 +34,20 @@ function load(file) {
   return cache[file];
 }
 
+/* ---------- time zone ---------- */
+// The viewer's zone: the one their device sets from its location (saved once location is allowed).
+const deviceTz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Kuwait"; } catch { return "Asia/Kuwait"; } })();
+const viewerTz = () => store.get("tz") || deviceTz;
+const city = (tz) => (tz || "").split("/").pop().replace(/_/g, " ");
+const tzLabel = () => `${city(viewerTz())} time`;
+
 /* ---------- formatting ---------- */
+// (named kuwait() from when the site was Kuwait-only; it now formats in the viewer's zone)
 const kuwait = (iso, withTime = true) => {
   if (!iso) return "";
   const d = new Date(iso.length === 10 ? iso + "T12:00:00Z" : iso);
   if (isNaN(d)) return iso;
-  return d.toLocaleString("en-GB", { timeZone: "Asia/Kuwait", day: "numeric", month: "short", year: "numeric",
+  return d.toLocaleString("en-GB", { timeZone: iso.length === 10 ? "UTC" : viewerTz(), day: "numeric", month: "short", year: "numeric",
     ...(withTime && iso.length > 10 ? { hour: "2-digit", minute: "2-digit" } : {}) });
 };
 const ago = (iso) => {
@@ -123,10 +131,19 @@ const ABOUT = {
   music: "Ranked by real listening: YouTube views of the official upload (artist channel, VEVO or Topic), plus how strongly MusicBrainz tags each song with the genre. Songs have no public quality ratings, so only measurable signals count.",
   sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
 };
+/* Where each section's facts come from, shown in a banner under its title */
+const SOURCES = {
+  news: "BBC, Reuters, AP, Al Jazeera, DW, France 24, CNBC, ABC News Australia, RNZ and The Guardian. Every story links to the original reports; AI only writes the short summary.",
+  movies: "IMDb (ratings and vote counts, from IMDb's official daily data), TMDB (titles, posters, trailers) and JustWatch via TMDB (where to stream).",
+  gaming: "Steam (official review counts, live player counts and charts), Metacritic (critic scores) and RAWG (the full game catalogue, including PlayStation, Xbox and Switch).",
+  music: "YouTube (view counts of each song's official video or audio), MusicBrainz and ListenBrainz (genres) and Apple's iTunes (artwork and previews).",
+  sports: "Official league YouTube channels (Premier League, NBA, NFL, UFC, Formula 1 and more), BBC Sport, ESPN, Yahoo Sports, CBS Sports, Motorsport.com, HLTV, The Guardian, and each league's established outlets.",
+};
 function heading(section, crumbs) {
   const s = SECTIONS.find((x) => x.id === section);
   $("pageTitle").textContent = s ? `${s.icon} ${s.name}` : "Search";
   $("pageSub").textContent = crumbs.filter(Boolean).join(" · ");
+  $("sectionSources").innerHTML = SOURCES[section] ? `<b>Sources:</b> ${esc(SOURCES[section])}` : "";
   $("sectionAbout").innerHTML = ABOUT[section] ? `<b>How this section is ranked:</b> ${esc(ABOUT[section])}` : "";
   document.title = [crumbs.filter(Boolean).join(" · "), s?.name, "Discover"].filter(Boolean).join(" – ");
 }
@@ -140,7 +157,8 @@ async function showMeta(section) {
   const file = SECTIONS.find((s) => s.id === section)?.file;
   const m = meta.sections?.[file];
   const u = $("updated");
-  u.textContent = m?.updated_at ? `Updated ${kuwait(m.updated_at)} (Kuwait)` : "";
+  u.textContent = m?.updated_at ? `Updated ${kuwait(m.updated_at)} (${tzLabel()})` : "";
+  locationBanner();
   const st = $("stale");
   const old = m?.updated_at && (Date.now() - new Date(m.updated_at)) / 36e5 > STALE_HOURS;
   if (m?.updated_at && (m.ok === false || old)) {
@@ -148,6 +166,61 @@ async function showMeta(section) {
     st.textContent = `This section shows data from ${kuwait(m.updated_at)} (${ago(m.updated_at)}). The latest refresh ` +
       (m.ok === false ? "could not get new data; it will retry at the next daily update." : "is late.");
   } else st.hidden = true;
+}
+
+/* ---------- location banner: daily update at 12:00 noon where the owner is ---------- */
+// Stays at the top until location is allowed. The coordinates themselves are never read or sent: once
+// allowed, the time zone the device sets from its location is used, and only that zone name goes into
+// the owner's GitHub issue link.
+const REPO = "https://github.com/aalr01x-maker/plan-my-day-discover";
+let locating = false;
+function locate(prompt) {
+  if (!navigator.geolocation || locating) return;
+  locating = true;
+  if (prompt) bannerHtml("📍 Finding your time zone…");
+  navigator.geolocation.getCurrentPosition(() => {
+    // phones keep their time zone in step with their location; re-read it (it may have changed since load)
+    let tz = deviceTz;
+    try { tz = Intl.DateTimeFormat().resolvedOptions().timeZone || deviceTz; } catch { /* keep device zone */ }
+    store.set("tz", tz); store.set("locAllowed", "1");
+    locating = false;
+    route();
+  }, (err) => {
+    locating = false;
+    if (err.code === err.PERMISSION_DENIED) { store.set("locAllowed", ""); bannerAsk(true); }
+    else if (prompt) bannerAsk(false, "Couldn't get your location just now. Try again in a moment.");
+  }, { enableHighAccuracy: false, timeout: 15000, maximumAge: 6 * 3600e3 });
+}
+function bannerHtml(html) { const b = $("locBanner"); b.hidden = false; b.innerHTML = `<div class="banner-in">${html}</div>`; }
+function bannerAsk(blocked, extra = "") {
+  bannerHtml(`<p><b>📍 Allow location so this site updates every day at 12:00 noon where you are.</b></p>
+    <p>Only your time zone is used; your exact location is never sent or stored anywhere.
+    Times on the site also switch to your local time.</p>
+    ${blocked ? `<p class="warn-text">Location is blocked for this site. Allow it in your browser's site settings, then tap the button.</p>` : ""}
+    ${extra ? `<p class="warn-text">${esc(extra)}</p>` : ""}
+    <button id="locBtn" class="banner-btn">Allow location</button>`);
+  $("locBtn").onclick = () => locate(true);
+}
+async function locationBanner() {
+  if (!navigator.geolocation) { $("locBanner").hidden = true; return; }
+  let perm = null;
+  try { perm = (await navigator.permissions?.query({ name: "geolocation" }))?.state || null; } catch { /* Safari: unknown */ }
+  const allowed = perm === "granted" || (perm === null && store.get("locAllowed") === "1");
+  if (perm === "denied") return bannerAsk(true);
+  if (!allowed) return bannerAsk(false);
+  if (!locating && !locationBanner.checked) { locationBanner.checked = true; locate(false); }   // travelling: re-check once per visit
+  const tz = viewerTz();
+  const sched = meta?.schedule?.tz || "Asia/Kuwait";
+  if (tz === sched) { $("locBanner").hidden = true; return; }
+  if (store.get("tzRequested") === tz) {
+    return bannerHtml(`<p>🕛 Moving the daily update to 12:00 noon ${esc(city(tz))} time. It applies from the next update; this note goes away then.</p>`);
+  }
+  const title = encodeURIComponent(`Set update time zone: ${tz}`);
+  const body = encodeURIComponent("Sent from the Discover site's location banner. Just tap Create (or Submit); the site's robot sets the time and closes this.");
+  bannerHtml(`<p><b>🕛 You're on ${esc(city(tz))} time; the daily update is at 12:00 noon ${esc(city(sched))} time.</b></p>
+    <p>Site owner: tap below, then Create on GitHub, to move it to 12:00 noon here. If today's noon here has passed without an update, one runs right away.</p>
+    <a id="tzMove" class="banner-btn" href="${REPO}/issues/new?title=${title}&body=${body}" target="_blank" rel="noopener">Move update to 12:00 ${esc(city(tz))} time</a>`);
+  $("tzMove").onclick = () => { store.set("tzRequested", tz); setTimeout(locationBanner, 500); };
 }
 
 /* ---------- cards ---------- */
@@ -226,7 +299,7 @@ function newsCard(s) {
 }
 function newsDetail(s) {
   return `<div class="detail"><h2 id="sheetTitle">${esc(s.headline)}</h2>
-    <div class="meta">${esc(s.country || "")} · First reported ${kuwait(s.published)} · Updated ${kuwait(s.updated)} (Kuwait)</div>
+    <div class="meta">${esc(s.country || "")} · First reported ${kuwait(s.published)} · Updated ${kuwait(s.updated)} (${tzLabel()})</div>
     ${img(s.image, "hero")}
     <p>${esc(s.summary)}</p>
     <div class="meta">${s.summary_by === "ai" ? "Summary written by AI from the linked articles only." : "Summary from the source article."}</div>
@@ -420,7 +493,7 @@ function sportCard(e) {
     <p class="summary">${esc(e.summary)}</p>${why(e.why)}</div></article>`;
 }
 function sportDetail(e) {
-  return `<div class="detail"><h2 id="sheetTitle">${esc(e.title)}</h2><div class="meta">${e.league ? esc(e.league) + " · " : ""}${kuwait(e.published)} (Kuwait)</div>
+  return `<div class="detail"><h2 id="sheetTitle">${esc(e.title)}</h2><div class="meta">${e.league ? esc(e.league) + " · " : ""}${kuwait(e.published)} (${tzLabel()})</div>
     ${img(e.image, "hero")}<p>${esc(e.summary)}</p><h3>Why it's here</h3><p>${esc(e.why)}.</p>
     <h3>Sources</h3><ul>${e.sources.map((x) => `<li><a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name)}: ${esc(x.title)}</a></li>`).join("")}</ul></div>`;
 }

@@ -70,6 +70,8 @@ def main(argv: list[str]) -> int:
     meta["run"] = {"started": common.iso(started), "finished": common.iso(common.now_utc()),
                    "ai": ai.status(), "youtube_units": yt.units, "failures": failures}
     meta["order"] = ORDER
+    # daily update time (12:00 noon in this zone), shown on the site; set from the site's location banner
+    meta["schedule"] = {"tz": common.env("UPDATE_TZ") or "Asia/Kuwait", "hour": 12}
     common.save_json(LAST / "meta.json", meta)
 
     # publish: copy every last-valid dataset into site/data (each file replaced atomically)
