@@ -114,10 +114,13 @@ def _details(appid: str, cache: dict, budget: list[int]) -> dict | None:
 
 
 def _tags(appid: str, cache: dict, budget: list[int]) -> list[str] | None:
-    """The game's top player tags (most votes first), cached 30 days."""
+    """The game's top player tags (most votes first) and review numbers, cached 30 days, or 5 days
+    for games with under 5,000 reviews (new games' review counts grow fast)."""
     hit = cache.get(appid)
+    a = (hit or {}).get("a") or {}
+    ttl = 30 if int(a.get("positive") or 0) + int(a.get("negative") or 0) >= 5000 else 5
     # entries cached before review numbers were kept ("a") are refreshed
-    if hit and "a" in hit and common.within(common.parse_time(hit["at"]), 30 * 24):
+    if hit and "a" in hit and common.within(common.parse_time(hit["at"]), ttl * 24):
         return hit["t"]
     if budget[0] <= 0:
         return hit["t"] if hit else None
@@ -269,7 +272,7 @@ def build(yt: YouTube | None = None) -> dict:
         # Recent: store pages created in the last few years (higher app ids), most-reviewed first;
         # release dates are then checked against the store.
         charts = set(most_played) | set(two_weeks)
-        pre_recent = sorted([r for r in rows if r["reviews"] >= 150 and (int(r["appid"]) >= 2_500_000 or r["appid"] in charts)],
+        pre_recent = sorted([r for r in rows if r["reviews"] >= 50 and (int(r["appid"]) >= 2_500_000 or r["appid"] in charts)],
                             key=lambda r: -r["reviews"])[:200]
         pre_trend = sorted(rows, key=lambda r: -(r["ccu"] + (20000 if r["appid"] in most_played else 0)
                                                  + (5000 if r["appid"] in two_weeks else 0)))[:150]
@@ -302,9 +305,9 @@ def build(yt: YouTube | None = None) -> dict:
         rawg_by_name, rawg_lists = {}, {"all_time": [], "recent": []}
         if rawg_key:
             # RAWG only finds candidates (most-played first); Steam reviews decide the ranking
-            for ranking, params in (("all_time", {"ordering": "-added"}),
-                                    ("recent", {"dates": f"{year_ago},{today}", "ordering": "-added"})):
-                for g in _rawg(rawg_key, params, rawg_filter):
+            for ranking, params, pages in (("all_time", {"ordering": "-added"}, 2),
+                                           ("recent", {"dates": f"{year_ago},{today}", "ordering": "-added"}, 5)):
+                for g in _rawg(rawg_key, params, rawg_filter, pages=pages):
                     rawg_by_name[common.norm(g["name"]).strip()] = g
                     rawg_lists[ranking].append(g)
 
@@ -389,13 +392,30 @@ def build(yt: YouTube | None = None) -> dict:
                 c["rank"] = i + 1
             out[ranking] = merged
 
+        # Trending covers Steam's activity charts; niche genres are topped up to 20 with this genre's
+        # other Steam games, ranked by Steam's official live player count (70%) and reviews (30%)
+        if len(out["trending"]) < 20:
+            have = {c["id"] for c in out["trending"]}
+            pool = {c["id"]: c for lst in (out["all_time"], out["recent"]) for c in lst if c["id"] not in have and c.get("user")}
+            for c in pool.values():
+                if c.get("players_now") is None:
+                    c["players_now"] = _players_now(c["id"], players_now)
+            live = [c for c in pool.values() if (c.get("players_now") or 0) >= 50]
+            top_live = max((c["players_now"] for c in live), default=1)
+            live.sort(key=lambda c: -(0.7 * common.log_scale(c["players_now"], top_live) + 0.3 * c["user"]["score"] / 100))
+            for c in live[: 20 - len(out["trending"])]:
+                out["trending"].append({**c, "why": f"{c['players_now']:,} people playing on Steam right now; "
+                                                     f"{c['user']['score']:.0f}% positive from {c['user']['reviews']:,} reviews."})
+            for i, c in enumerate(out["trending"]):
+                c["rank"] = i + 1
+
         notes = {}
         if len(out["recent"]) < 20:
             notes["recent"] = (f"Only {len(out['recent'])} games in this genre were confirmed as released in the last 12 months"
                                + ("." if rawg_key else "; the full list (incl. PS5) arrives with the RAWG key."))
-        if len(out["trending"]) < 10:
-            notes["trending"] = (f"Trending counts what people are playing on Steam this week; only {len(out['trending'])} "
-                                 f"{name.lower()} game{'s' if len(out['trending']) != 1 else ''} made Steam's activity charts.")
+        if len(out["trending"]) < 20:
+            notes["trending"] = (f"Only {len(out['trending'])} {name.lower()} game{'s' if len(out['trending']) != 1 else ''} "
+                                 f"have 50+ people playing on Steam right now.")
         if not rawg_key:
             notes["platforms"] = "Console platforms (incl. PS5) appear once the RAWG key is added; until then only Steam data is used."
         genres[gid] = {"name": name, **out, "notes": notes, "built_at": common.iso(now)}
