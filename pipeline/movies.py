@@ -30,6 +30,7 @@ FALLBACK_REGION = "US"
 # only for membership (IMDb has no such label); anime is recognised by its Japanese original title
 # on IMDb, plus TMDB's Japanese-original animation list for anime with English titles.
 TABS = {
+    "all": ("All", {"all": True}),   # every genre (owner: first tab)
     "action": ("Action", {"any": {"Action"}}),
     "adventure": ("Adventure", {"any": {"Adventure"}}),
     "anime": ("Anime", {"anime": True}),
@@ -295,6 +296,8 @@ def build() -> dict:
             members = _members(tmdb, media, rule["member"][mi]) if "member" in rule else None
 
             def belongs(iid, t):
+                if rule.get("all"):
+                    return True
                 g = t["genres"]
                 anime = t["japanese"] or iid in anime_ids[media]
                 if rule.get("anime"):

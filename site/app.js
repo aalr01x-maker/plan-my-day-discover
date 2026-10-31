@@ -143,6 +143,8 @@ function heading(section, crumbs) {
   const s = SECTIONS.find((x) => x.id === section);
   $("pageTitle").textContent = s ? `${s.icon} ${s.name}` : "Search";
   $("pageSub").textContent = crumbs.filter(Boolean).join(" · ");
+  // a picture pointing (or looking) up at the choices above the results
+  $("pointer").innerHTML = SECTIONS.some((x) => x.id === section) ? `<img src="img/pointers/${section}.jpg" alt="" decoding="async">` : "";
   $("sectionSources").innerHTML = SOURCES[section] ? `<b>Sources:</b> ${esc(SOURCES[section])}` : "";
   $("sectionAbout").innerHTML = ABOUT[section] ? `<b>How this section is ranked:</b> ${esc(ABOUT[section])}` : "";
   document.title = [crumbs.filter(Boolean).join(" · "), s?.name, "Discover"].filter(Boolean).join(" – ");

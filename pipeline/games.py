@@ -41,6 +41,7 @@ RAWG = "https://api.rawg.io/api"
 STATE = common.STATE / "games.json"
 
 GENRES = {
+    "all": ("All", [], {}),   # every genre (owner: first tab)
     "action": ("Action", ["Action"], {"genres": "action"}),
     "adventure": ("Adventure", ["Adventure"], {"genres": "adventure"}),
     "rpg": ("RPG", ["RPG"], {"genres": "role-playing-games-rpg"}),
@@ -289,7 +290,7 @@ def build(yt: YouTube | None = None) -> dict:
 
         def detail(r, depth=TOP_TAGS):
             top = _tags(r["appid"], state["tags"], tbudget)
-            if not top or not any(t in top[:depth] for t in tags) or NOT_GAMES & set(top[:3]):
+            if not top or (tags and not any(t in top[:depth] for t in tags)) or NOT_GAMES & set(top[:3]):
                 return None  # not really this genre (or not a game)
             d = _details(r["appid"], state["details"], budget)
             if not d or d.get("type") != "game":

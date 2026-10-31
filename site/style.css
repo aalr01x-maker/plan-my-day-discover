@@ -139,3 +139,11 @@ table.mini td, table.mini th { border-bottom: 1px solid var(--line); padding: 5p
   background: var(--surface); border: 1px solid var(--line); }
 .sources b { color: var(--text); }
 .sources:empty { display: none; }
+
+/* Section picture pointing up at the choices, centered between them and the results */
+.pointer { display: flex; justify-content: center; padding: 14px 16px 0; }
+.pointer:empty { display: none; }
+.pointer img { height: 190px; width: auto; max-width: 100%; object-fit: cover; border-radius: 18px;
+  -webkit-mask-image: radial-gradient(ellipse 75% 80% at 50% 45%, #000 60%, transparent 100%);
+          mask-image: radial-gradient(ellipse 75% 80% at 50% 45%, #000 60%, transparent 100%); }
+@media (max-width: 600px) { .pointer img { height: 150px; } }

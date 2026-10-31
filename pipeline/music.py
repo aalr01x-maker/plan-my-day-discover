@@ -37,7 +37,9 @@ MB = "https://musicbrainz.org/ws/2/recording"
 STATE = common.STATE / "music.json"
 
 GENRES = {
-    # broad genres first (owner, 31 Oct 2026), then the owner's original, more niche ones
+    # "All" first: every genre's songs together (built from the others, no tags of its own);
+    # then broad genres (owner, 31 Oct 2026), then the owner's original, more niche ones
+    "all": ("All", []),
     "rap": ("Rap", ["hip hop", "rap", "east coast hip hop", "west coast hip hop"]),
     "rock": ("Rock", ["rock", "classic rock", "hard rock", "alternative rock"]),
     "rnb": ("R&B", ["r&b", "contemporary r&b", "neo soul", "rhythm and blues"]),
@@ -622,9 +624,16 @@ def build(yt: YouTube | None = None) -> dict:
     #    songs belong to the genre; Last.fm's audience pre-sorts them. Neither number is shown:
     #    the lists are ranked and labelled by YouTube views.
     prepared = {}
-    for gid, (name, tags) in GENRES.items():
+    for gid in [g for g in GENRES if g != "all"] + ["all"]:   # "All" is built from the others' songs
+        name, tags = GENRES[gid]
         seen: dict[str, dict] = {}
-        for mbid in pools[gid]:
+        if gid == "all":
+            for other in prepared.values():
+                for song in other[2]:
+                    same = common.norm(song["artist"] + " " + song["title"].split(" (")[0]).strip()
+                    if same not in seen or seen[same]["users"] < song["users"]:
+                        seen[same] = song
+        for mbid in (pools.get(gid) or {}) if gid != "all" else ():
             if mbid in dz_meta:   # Deezer chart song: Deezer's own genre decides; its rank pre-sorts
                 meta = dz_meta[mbid]
                 p = {"users": max(1, meta["rank"] // 2000), "listens": 0}
@@ -675,6 +684,7 @@ def build(yt: YouTube | None = None) -> dict:
         tr = capped(sorted([x for x in songs if (x.get("released") or "") >= two_years
                             or week_chart.get(x["mbid"]) or week_chart.get(skey(x))], key=lambda x: -internal(x)), 30, 3)
         prepared[gid] = (name, tags, songs, at, rc, tr)
+    prepared = {g: prepared[g] for g in GENRES}   # "All" back to the front
 
     # 2. Find each candidate's official YouTube video, at most YOUTUBE_LOOKUPS new songs a day,
     #    taking genres in turn so every genre fills at the same pace.
