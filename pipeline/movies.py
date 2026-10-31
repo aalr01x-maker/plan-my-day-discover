@@ -64,9 +64,14 @@ NICHE = {"anime", "experimental", "documentary", "adult-animation"}
 NICHE_RECENT_VOTES = {"movie": {"tmdb": 10, "imdb": 200}, "tv": {"tmdb": 8, "imdb": 100}}
 
 
+NICHE_ALL_TIME_VOTES = {"movie": {"tmdb": 300, "imdb": 5000}, "tv": {"tmdb": 100, "imdb": 1000}}
+
+
 def _min_votes(media: str, ranking: str, tab: str, imdb_scale: bool) -> int:
     if ranking == "recent" and tab in NICHE:
         return NICHE_RECENT_VOTES[media]["imdb" if imdb_scale else "tmdb"]
+    if ranking == "all_time" and tab in NICHE:
+        return NICHE_ALL_TIME_VOTES[media]["imdb" if imdb_scale else "tmdb"]
     return (IMDB_MIN_VOTES if imdb_scale else MIN_VOTES)[media][ranking]
 
 
@@ -268,7 +273,7 @@ def build() -> dict:
             date_to = "primary_release_date.lte" if media == "movie" else "air_date.lte"
             pools = {
                 "all_time": _discover(tmdb, media, {**base, "sort_by": "vote_average.desc",
-                                                   "vote_count.gte": MIN_VOTES[media]["all_time"]}, 4),
+                                                   "vote_count.gte": _min_votes(media, "all_time", tab, False)}, 4),
                 # TMDB pre-filter a point below the bar: IMDb and TMDB ratings differ, IMDb decides
                 "recent": [] if tab in NO_RECENT else _discover(tmdb, media, {
                     **base, date_from: year_ago, date_to: today, "sort_by": "popularity.desc",

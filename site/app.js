@@ -127,7 +127,7 @@ function note(text, label = "Ranked by") {
 const ABOUT = {
   news: "Stories are grouped across BBC, Reuters, AP, Al Jazeera, DW, France 24 and CNBC, then ranked by how many independent outlets confirm them (35%), significance (30%), recency (20%) and source reliability (15%). Duplicates are merged into one story.",
   movies: "Ranked from IMDb ratings (TMDB only where IMDb has none) and popularity. Every list shows only titles rated 7.5+ out of 10. Ratings are weighted by number of votes, so a title with a few votes can't top the list; each ranking mixes quality and popularity differently.",
-  gaming: "Ranked from Metacritic critic scores and Steam user reviews (weighted by how many people reviewed), plus popularity. Player and review counts are Steam's own; games not on Steam show the critic score only, as Sony and Nintendo publish no player numbers.",
+  gaming: "Ranked only by Steam player reviews (weighted by how many people reviewed) plus popularity on Steam. Every review and player count is Steam's own; games not sold on Steam (Nintendo and PlayStation exclusives) aren't listed.",
   music: "Ranked by real listening: YouTube views of the official upload (artist channel, VEVO or Topic), plus how strongly MusicBrainz tags each song with the genre. Songs have no public quality ratings, so only measurable signals count.",
   sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
 };
@@ -135,7 +135,7 @@ const ABOUT = {
 const SOURCES = {
   news: "BBC, Reuters, AP, Al Jazeera, DW, France 24, CNBC, ABC News Australia, RNZ and The Guardian. Every story links to the original reports; AI only writes the short summary.",
   movies: "IMDb (ratings and vote counts, from IMDb's official daily data), TMDB (titles, posters, trailers) and JustWatch via TMDB (where to stream).",
-  gaming: "Steam (official review counts, live player counts and charts), Metacritic (critic scores) and RAWG (the full game catalogue, including PlayStation, Xbox and Switch).",
+  gaming: "Steam (official player reviews, live player counts and charts) and RAWG (to find games in each genre and which consoles they're also on).",
   music: "YouTube (view counts of each song's official video or audio), MusicBrainz and ListenBrainz (genres) and Apple's iTunes (artwork and previews).",
   sports: "Official league YouTube channels (Premier League, NBA, NFL, UFC, Formula 1 and more), BBC Sport, ESPN, Yahoo Sports, CBS Sports, Motorsport.com, HLTV, The Guardian, and each league's established outlets.",
 };
@@ -368,19 +368,18 @@ async function gaming(parts, q) {
   const g = data.genres[genre];
   const list = (g?.[ranking] || []).filter((x) => flags.every((f) => x.flags.includes(f)));
   heading("gaming", [g?.name, label(RANKINGS, ranking), ...flags.map((f) => f[0].toUpperCase() + f.slice(1))]);
-  note([`${g?.name || ""} games:`, { all_time: "Best of All Time: 85% quality (critic + weighted user score) + 15% popularity.",
-    recent: "Best Recent: released in the last 12 months; 75% quality + 25% popularity.",
-    trending: "Trending: players right now and this week's change; 70% popularity + 30% quality." }[ranking], g?.notes?.stale, g?.notes?.[ranking], g?.notes?.platforms].filter(Boolean).join(" "));
+  note([`${g?.name || ""} games:`, { all_time: "Best of All Time: 85% Steam player reviews (weighted by review count) + 15% popularity.",
+    recent: "Best Recent: released in the last 12 months; 75% Steam player reviews + 25% popularity.",
+    trending: "Trending: Steam players right now and this week's change; 70% popularity + 30% Steam player reviews." }[ranking], g?.notes?.stale, g?.notes?.[ranking], g?.notes?.platforms].filter(Boolean).join(" "));
   paint(list, gameCard, gameDetail, flags.length ? "No games match these filters in this list." : "No games here yet.");
   return ["gaming", genre, ranking];
 }
 const flagQ = (flags) => { const q = new URLSearchParams(); if (flags.length) q.set("f", flags.join(",")); return q; };
 function scoreBadges(x) {
   const u = x.user;
-  return `<div class="scores">${x.critic ? `<span class="score">Critic <b>${x.critic.score}</b> <span class="meta">Metacritic</span></span>` : `<span class="score">Critic –</span>`}
-    ${u && u.score != null ? `<span class="score">Steam reviews <b>${Math.round(u.score)}%</b> · ${num(u.reviews)}</span>` : ""}
+  return `<div class="scores">${u && u.score != null ? `<span class="score">Steam reviews <b>${Math.round(u.score)}%</b> · ${num(u.reviews)}</span>` : ""}
     ${x.players_now != null ? `<span class="score">Playing now <b>${num(x.players_now)}</b> <span class="meta">Steam</span></span>` : ""}
-    ${!x.critic && !(u && u.score != null) ? '<span class="badge">no scores yet</span>'
+    ${!(u && u.score != null) ? '<span class="badge">no reviews yet</span>'
       : u ? `<span class="badge ${u.confidence === "high" ? "good" : u.confidence === "low" ? "warn" : ""}">${esc(u.confidence)} confidence</span>` : ""}</div>`;
 }
 function gameCard(x) {
@@ -395,8 +394,7 @@ function gameDetail(x) {
     <div class="meta">${esc(x.developer || "")} · ${x.released ? "Released " + kuwait(x.released, false) : ""} · ${esc(x.platforms.join(", "))}</div>
     ${videoBlock(x.video, x.trailer) || img(x.image, "hero")}
     <h3>Scores</h3>${scoreBadges(x)}
-    <p class="meta">Critic: ${x.critic ? `Metacritic${x.critic.url ? ` (<a href="${esc(x.critic.url)}" target="_blank" rel="noopener">source</a>)` : ""}` : "no critic score published"}.
-    ${x.user ? "Steam reviews: % positive, weighted toward 70% when there are few reviews. Playing now: Steam's official live count at the daily update." : "Not on Steam; PlayStation and Nintendo publish no player or review counts."}</p>
+    <p class="meta">Steam reviews: % positive, weighted toward 70% when there are few reviews. Playing now: Steam's official live count at the daily update.</p>
     ${x.genres?.length ? `<p class="meta">Steam genres: ${esc(x.genres.join(", "))}</p>` : ""}
     <h3>Why it ranks here</h3><p>${esc(x.why)}</p>${linksBlock(x.links)}</div>`;
 }
