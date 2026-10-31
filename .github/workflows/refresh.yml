@@ -2,8 +2,9 @@ name: Daily refresh
 
 on:
   schedule:
-    - cron: "0 9 * * *"        # 09:00 UTC = 12:00 noon Kuwait: after US night games and European evening matches
-                               # finish, just after YouTube's daily quota reset; Europe gets it in the morning
+    - cron: "15 8 * * *"       # starts 08:15 UTC = 11:15 Kuwait so it's live by about 12:00 noon Kuwait (runs take
+                               # 20-40 min; GitHub may start a few minutes late). After US night games and European
+                               # evening matches finish and after YouTube's daily quota reset (07:00/08:00 UTC)
   workflow_dispatch:
     inputs:
       sections:
