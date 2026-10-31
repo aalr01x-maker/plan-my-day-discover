@@ -48,6 +48,20 @@ GENRES = {
     "nu-disco": ("Nu-Disco / Chill Dance", ["nu disco", "nu-disco", "disco house"]),
     "conscious-rap": ("Conscious Rap / Mellow Vocal Hip-Hop", ["conscious hip hop", "jazz rap", "alternative hip hop"]),
 }
+# The artist must belong to the genre's family too (their own MusicBrainz tags), so one stray tag
+# can't put a pop song under Progressive House. Artists with no tags at all need a strong song tag.
+FAMILY = {
+    "progressive-house": r"house|progressive|melodic techno|trance",
+    "chillwave-trip-hop": r"chillwave|trip ?hop|downtempo|chill|lo ?fi|electronica|ambient|nu jazz",
+    "indie-electro": r"indie|electro|synth|electronic",
+    "ambient-pop": r"dream ?pop|ambient|ethereal|shoegaze|art pop|chamber pop|indie pop|electropop",
+    "electro-jazz-soul": r"jazz|soul|swing|funk|neo soul",
+    "retrowave": r"synthwave|retrowave|outrun|darksynth|vaporwave|synth",
+    "nu-disco": r"disco|house|funk|dance|electro ?pop",
+    "conscious-rap": r"hip ?hop|rap",
+}
+STRONG_FIT = 0.8
+
 PER_ARTIST = 2            # a list shows at most 2 songs by one artist
 TAG_LEVELS = {"recording": 1.0, "release_group": 0.8, "artist": 0.6}
 ITUNES_PER_RUN = 150      # Apple asks for ~20 requests/minute; the cache fills over a few days
@@ -122,7 +136,7 @@ def _chunks(seq, n):
 
 
 def _metadata(mbids: set[str], cache: dict) -> None:
-    todo = [m for m in mbids if m not in cache]
+    todo = [m for m in mbids if m not in cache or "atags" not in cache[m]]   # "atags" added 31 Oct 2026
     for batch in _chunks(todo, 50):
         try:
             data = common.get(f"{LB}/metadata/recording/", params={"recording_mbids": ",".join(batch), "inc": "artist release tag"})
@@ -140,6 +154,7 @@ def _metadata(mbids: set[str], cache: dict) -> None:
                 "artist_youtube": yt_channel,
                 # {tag: strength} -- recording tags count most, then release, then artist
                 "tags": _tag_strengths(m.get("tag") or {}),
+                "atags": sorted({(t.get("tag") or "").lower().replace("-", " ") for t in (m.get("tag") or {}).get("artist") or []}),
             }
 
 
@@ -441,6 +456,9 @@ def build(yt: YouTube | None = None) -> dict:
             fit = _fit(meta, tags)
             if fit <= 0:  # not actually tagged with this genre
                 continue
+            atags = " | ".join(meta.get("atags") or [])
+            if not (re.search(FAMILY[gid], atags) if atags else fit >= STRONG_FIT):
+                continue   # the artist isn't in this genre's family
             song = {"mbid": mbid, "fit": fit, **meta, **p}
             # one entry per song (remasters, instrumentals and re-releases are separate recordings)
             same = common.norm(meta["artist"] + " " + meta["title"].split(" (")[0]).strip()

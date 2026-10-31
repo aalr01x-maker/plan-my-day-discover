@@ -67,12 +67,22 @@ NICHE_RECENT_VOTES = {"movie": {"tmdb": 10, "imdb": 200}, "tv": {"tmdb": 8, "imd
 NICHE_ALL_TIME_VOTES = {"movie": {"tmdb": 300, "imdb": 5000}, "tv": {"tmdb": 100, "imdb": 1000}}
 
 
-def _min_votes(media: str, ranking: str, tab: str, imdb_scale: bool) -> int:
+# Every list aims for a full 20 (owner, 31 Oct 2026): when fewer than 20 titles rated 7.5+ meet the
+# vote minimum, the minimum steps down (the 7.5 floor never does); vote-weighting still keeps
+# low-vote titles below well-known ones.
+LADDER = (1.0, 0.5, 0.2, 0.08, 0.03)
+FLOOR_VOTES = {"imdb": 50, "tmdb": 5}
+
+
+def _min_votes(media: str, ranking: str, tab: str, imdb_scale: bool, factor: float = 1.0) -> int:
+    scale = "imdb" if imdb_scale else "tmdb"
     if ranking == "recent" and tab in NICHE:
-        return NICHE_RECENT_VOTES[media]["imdb" if imdb_scale else "tmdb"]
-    if ranking == "all_time" and tab in NICHE:
-        return NICHE_ALL_TIME_VOTES[media]["imdb" if imdb_scale else "tmdb"]
-    return (IMDB_MIN_VOTES if imdb_scale else MIN_VOTES)[media][ranking]
+        base = NICHE_RECENT_VOTES[media][scale]
+    elif ranking == "all_time" and tab in NICHE:
+        base = NICHE_ALL_TIME_VOTES[media][scale]
+    else:
+        base = (IMDB_MIN_VOTES if imdb_scale else MIN_VOTES)[media][ranking]
+    return max(FLOOR_VOTES[scale], int(base * factor)) if factor < 1 else base
 
 
 NO_RECENT = {"classic"}   # pre-1990 / pre-2000 by definition: no releases in the last 12 months
@@ -271,28 +281,29 @@ def build() -> dict:
                 continue
             date_from = "primary_release_date.gte" if media == "movie" else "air_date.gte"
             date_to = "primary_release_date.lte" if media == "movie" else "air_date.lte"
-            pools = {
-                "all_time": _discover(tmdb, media, {**base, "sort_by": "vote_average.desc",
-                                                   "vote_count.gte": _min_votes(media, "all_time", tab, False)}, 4),
-                # TMDB pre-filter a point below the bar: IMDb and TMDB ratings differ, IMDb decides
-                "recent": [] if tab in NO_RECENT else _discover(tmdb, media, {
-                    **base, date_from: year_ago, date_to: today, "sort_by": "popularity.desc",
-                    **({"first_air_date.gte": tv_started} if media == "tv" else {}),
-                    "vote_count.gte": _min_votes(media, "recent", tab, False), "vote_average.gte": MIN_RATING[media] - 1.0}, 3),
-                "trending": _discover(tmdb, media, {**base, "sort_by": "popularity.desc",
-                                                   "vote_count.gte": MIN_VOTES[media]["trending"],
-                                                   "vote_average.gte": MIN_RATING[media] - 1.0}, 4),
-            }
+            def pool_for(ranking, factor):
+                tv = _min_votes(media, ranking, tab, False, factor)
+                if ranking == "all_time":
+                    return _discover(tmdb, media, {**base, "sort_by": "vote_average.desc", "vote_count.gte": tv}, 4)
+                if ranking == "recent":
+                    # TMDB pre-filter a point below the bar: IMDb and TMDB ratings differ, IMDb decides
+                    return [] if tab in NO_RECENT else _discover(tmdb, media, {
+                        **base, date_from: year_ago, date_to: today, "sort_by": "popularity.desc",
+                        **({"first_air_date.gte": tv_started} if media == "tv" else {}),
+                        "vote_count.gte": tv, "vote_average.gte": MIN_RATING[media] - 1.0}, 3)
+                return _discover(tmdb, media, {**base, "sort_by": "popularity.desc", "vote_count.gte": tv,
+                                               "vote_average.gte": MIN_RATING[media] - 1.0}, 4)
+
+            pools = {ranking: pool_for(ranking, 1.0) for ranking in ("all_time", "recent", "trending")}
             # TMDB's weekly trending list, kept only where it matches this tab's discover results
             tab_ids = {t["id"] for p in pools.values() for t in p}
             week_rank = {t["id"]: i for i, t in enumerate(trending[media])}
             pools["trending"] = [t for t in trending[media] if t["id"] in tab_ids] + pools["trending"]
 
-            lists = {}
-            for ranking, pool in pools.items():
+            def qualifying(pool, ranking, factor):
                 seen, rows = set(), []
                 for t in pool:
-                    if t["id"] in seen or (t.get("vote_count") or 0) < _min_votes(media, ranking, tab, False):
+                    if t["id"] in seen or (t.get("vote_count") or 0) < _min_votes(media, ranking, tab, False, factor):
                         continue
                     seen.add(t["id"])
                     if "_rating" not in t:
@@ -300,12 +311,23 @@ def build() -> dict:
                         r = imdb.rating(t["_imdb"])
                         t["_rating"], t["_votes"], t["_src"] = r + ("IMDb",) if r else \
                             (t.get("vote_average") or 0, t.get("vote_count") or 0, "TMDB")
-                    floor_votes = _min_votes(media, ranking, tab, t["_src"] == "IMDb")
-                    if t["_votes"] < floor_votes:
+                    if t["_votes"] < _min_votes(media, ranking, tab, t["_src"] == "IMDb", factor):
                         continue
                     if t["_rating"] < MIN_RATING[media]:
                         continue
                     rows.append(t)
+                return rows
+
+            lists, relaxed = {}, {}
+            for ranking, pool in pools.items():
+                rows = qualifying(pool, ranking, 1.0)
+                for factor in LADDER[1:]:
+                    if len(rows) >= LIMIT[media] or (ranking == "recent" and tab in NO_RECENT):
+                        break
+                    known = {t["id"] for t in pool}
+                    pool = pool + [t for t in pool_for(ranking, factor) if t["id"] not in known]
+                    rows = qualifying(pool, ranking, factor)
+                    relaxed[ranking] = _min_votes(media, ranking, tab, True, factor)
                 if not rows:
                     lists[ranking] = []
                     continue
@@ -374,6 +396,9 @@ def build() -> dict:
                 if len(cards[ranking]) < LIMIT[media]:
                     notes[ranking] = (f"Only {len(cards[ranking])} {name} {kind} {what} are rated {MIN_RATING[media]:.1f}+, "
                                       f"so the list is shorter instead of padded with weaker titles.")
+            for ranking, n in relaxed.items():
+                extra = f"To fill the list it includes less-known titles (at least {n:,} IMDb votes); ratings are still weighted by vote count."
+                notes[ranking] = (notes[ranking] + " " + extra) if ranking in notes else extra
             out[media][tab] = {"name": name, **cards, "notes": notes}
             common.log(f"movies {media}/{tab}: {len(cards['all_time'])}/{len(cards['recent'])}/{len(cards['trending'])}")
 
