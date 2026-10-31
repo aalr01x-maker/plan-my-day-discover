@@ -53,6 +53,26 @@ LIMIT = {"movie": 20, "tv": 20}
 WEIGHTS = {"all_time": 0.85, "recent": 0.75, "trending": 0.30}
 
 
+DETAIL_FIELDS = ("id", "title", "name", "release_date", "first_air_date", "overview", "poster_path", "genres",
+                 "number_of_seasons", "status", "seasons", "videos", "watch/providers")
+EPISODE_FIELDS = ("episode_number", "name", "vote_average", "vote_count", "air_date")
+
+
+def _slim(path: str, data: dict) -> dict:
+    """Keep only the fields the site uses (full TMDB responses carry cast/crew and are huge)."""
+    if "/season/" in path:
+        return {"episodes": [{k: e.get(k) for k in EPISODE_FIELDS} for e in data.get("episodes") or []]}
+    if path.startswith(("/movie/", "/tv/")):
+        out = {k: data.get(k) for k in DETAIL_FIELDS if k in data}
+        if out.get("seasons"):
+            out["seasons"] = [{k: x.get(k) for k in ("season_number", "episode_count", "air_date")} for x in out["seasons"]]
+        if out.get("watch/providers"):
+            results = out["watch/providers"].get("results") or {}
+            out["watch/providers"] = {"results": {r: results[r] for r in ("KW", "US") if r in results}}
+        return out
+    return data
+
+
 class TMDB:
     def __init__(self, token: str, cache: dict):
         self.h = {"Authorization": f"Bearer {token}", "accept": "application/json"}
@@ -67,6 +87,7 @@ class TMDB:
         self.calls += 1
         data = common.get(API + path, params=params, headers=self.h)
         if ttl_h:
+            data = _slim(path, data)
             self.cache[key] = {"at": common.iso(common.now_utc()), "d": data}
         return data
 

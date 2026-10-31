@@ -13,9 +13,12 @@ Ranking (owner's weights):
              player activity, and growth between our daily snapshots)
   quality = mean of the critic and user scores that exist.
 
-Sources: SteamSpy (genre tag lists, review counts, players), Steam store
-(release dates, Metacritic, platforms, trailers, store links), RAWG with
-RAWG_API_KEY (console platforms incl. PS5, Metacritic, more trailers).
+Sources: RAWG (genre lists across PC / PS5 / Xbox / Switch, Metacritic, user
+ratings, release dates, platforms), Steam's official activity charts (most played
+with last week's rank; 2-week top 100) for Trending, Steam store (release dates,
+Metacritic, trailers, store links) and SteamSpy per-game data (Steam review counts,
+player tags, cached 30 days). SteamSpy's genre lists are no longer used: that
+endpoint stopped answering on 31 Oct 2026.
 Indie / Survival / Multiplayer are filter tags, not tabs.
 
 A game belongs to a genre tab only when that genre is among the top 7 player tags
@@ -56,36 +59,6 @@ TOP_TAGS = 7
 NOT_GAMES = {"Software", "Utilities", "Design & Illustration", "Animation & Modeling", "Video Production",
              "Audio Production", "Photo Editing", "Game Development"}
 VIDEOS_PER_RUN = 15
-
-
-SPY_CACHE = common.STATE / "steamspy_tags.json"
-_spy_cache: dict | None = None
-
-
-def _spy_tag(tag: str) -> dict:
-    """SteamSpy's game list for a tag. SteamSpy throttles bursts, so failures wait and retry;
-    if it still fails, the last list fetched (kept in state) is used."""
-    global _spy_cache
-    if _spy_cache is None:
-        _spy_cache = common.load_json(SPY_CACHE, {})
-    for attempt in range(4):
-        time.sleep(1.1 if attempt == 0 else 45)
-        try:
-            data = common.get(SPY, params={"request": "tag", "tag": tag}, timeout=90) or {}
-        except common.FetchError as exc:
-            common.log(f"games: steamspy tag {tag!r} attempt {attempt + 1}: {exc}")
-            continue
-        if data:
-            # keep only what the ranking needs (the full lists are large)
-            slim = {k: {f: v.get(f) for f in ("name", "developer", "positive", "negative", "ccu", "owners")} for k, v in data.items()}
-            _spy_cache[tag] = {"at": common.iso(common.now_utc()), "d": slim}
-            common.save_json(SPY_CACHE, _spy_cache)
-            return slim
-    cached = _spy_cache.get(tag)
-    if cached:
-        common.log(f"games: using SteamSpy {tag!r} list from {cached['at']}")
-        return cached["d"]
-    return {}
 
 
 def _user_score(pos: int, neg: int) -> tuple[float | None, int]:
@@ -175,15 +148,20 @@ def _rawg(key: str, params: dict, extra: dict, pages: int = 2) -> list[dict]:
     return out
 
 
-def _rawg_card(g: dict, weight_q: float, max_added: int, flags_from: list) -> dict | None:
-    """A card for a game found only on RAWG (no Steam page): RAWG user rating + Metacritic."""
+def _rawg_card(g: dict, weight_q: float, max_added: int, flags_from: list, allow_unscored: bool = False) -> dict | None:
+    """A card for a game found only on RAWG (no Steam page): RAWG user rating + Metacritic.
+    New releases often have no scores yet: with allow_unscored they are listed (never given a
+    made-up score) and rank below scored games, by popularity only."""
     n = g.get("ratings_count") or 0
-    if n < 30 and not g.get("metacritic"):
-        return None
     user = round(common.bayes_rating((g.get("rating") or 0) * 20, n, PRIOR, 200), 1) if n >= 30 else None
     scores = [x for x in (user, g.get("metacritic")) if x]
-    quality = sum(scores) / len(scores) / 100
-    score = weight_q * quality + (1 - weight_q) * common.log_scale(g.get("added") or 0, max_added)
+    popularity = common.log_scale(g.get("added") or 0, max_added)
+    if scores:
+        score = weight_q * sum(scores) / len(scores) / 100 + (1 - weight_q) * popularity
+    elif allow_unscored and (g.get("added") or 0) >= 3:
+        score = 0.25 * popularity
+    else:
+        return None
     tags = {t.get("slug") for t in flags_from}
     platforms = sorted({p["platform"]["name"] for p in g.get("platforms") or []})
     return {
@@ -196,7 +174,8 @@ def _rawg_card(g: dict, weight_q: float, max_added: int, flags_from: list) -> di
         "flags": [f for f in ("indie", "survival", "multiplayer") if f in tags],
         "genres": [x["name"] for x in g.get("genres") or []], "score": round(score, 4),
         "why": (f"Metacritic {g['metacritic']}; " if g.get("metacritic") else "")
-               + (f"{user:.0f}% weighted RAWG user rating from {n:,} ratings" if user else "no user rating yet")
+               + (f"{user:.0f}% weighted RAWG user rating from {n:,} ratings" if user else
+                  "no critic or user score yet; ranked by how many RAWG users added it")
                + "; not on Steam, so console data from RAWG.",
         "video": None, "trailer": None,
         "links": [{"name": "RAWG", "url": f"https://rawg.io/games/{g['slug']}"}]
@@ -211,7 +190,6 @@ def build(yt: YouTube | None = None) -> dict:
     year_ago = (now - timedelta(days=365)).strftime("%Y-%m-%d")
     state = common.load_json(STATE, {"details": {}, "ccu": {}, "videos": {}})
     state.setdefault("tags", {})
-    flags = {f: set(_spy_tag(tag)) for f, tag in FLAG_TAGS.items()}
     time.sleep(1.1)
     try:
         two_weeks = common.get(SPY, params={"request": "top100in2weeks"}, timeout=90) or {}
@@ -228,22 +206,17 @@ def build(yt: YouTube | None = None) -> dict:
 
     genres = {}
     for gid, (name, tags, rawg_filter) in GENRES.items():
+        # Steam side: the games on Steam's own activity charts (genre verified per game below).
+        # SteamSpy's genre-list endpoint stopped answering (31 Oct 2026), so it isn't used;
+        # RAWG supplies the genre lists for All-time and Recent.
         apps: dict[str, dict] = {}
-        for tag in tags:
-            for appid, a in _spy_tag(tag).items():
+        for appid in set(most_played) | set(two_weeks):
+            a = two_weeks.get(appid)
+            if not a:
+                _tags(appid, state["tags"], tbudget)
+                a = (state["tags"].get(appid) or {}).get("a")
+            if a:
                 apps[appid] = a
-        if not apps:
-            # SteamSpy's genre lists are unavailable: start from Steam's own charts instead
-            # (genre still verified per game below); RAWG fills All-time and Recent.
-            for appid in set(most_played) | set(two_weeks):
-                a = two_weeks.get(appid)
-                if not a:
-                    _tags(appid, state["tags"], tbudget)
-                    a = (state["tags"].get(appid) or {}).get("a")
-                if a:
-                    apps[appid] = a
-            if apps:
-                common.log(f"games {gid}: SteamSpy genre list unavailable; using {len(apps)} Steam chart games + RAWG")
         if not apps:
             previous = (common.load_json(common.STATE / "last" / "games.json", {}).get("genres") or {}).get(gid)
             if previous:
@@ -275,9 +248,9 @@ def build(yt: YouTube | None = None) -> dict:
                 return 0.0
             return max(-1.0, min(3.0, (h[days[-1]] - h[days[0]]) / h[days[0]]))
 
-        def detail(r):
+        def detail(r, depth=TOP_TAGS):
             top = _tags(r["appid"], state["tags"], tbudget)
-            if not top or not any(t in top[:TOP_TAGS] for t in tags) or NOT_GAMES & set(top[:3]):
+            if not top or not any(t in top[:depth] for t in tags) or NOT_GAMES & set(top[:3]):
                 return None  # not really this genre (or not a game)
             d = _details(r["appid"], state["details"], budget)
             if not d or d.get("type") != "game":
@@ -297,12 +270,12 @@ def build(yt: YouTube | None = None) -> dict:
         pre_recent = sorted([r for r in rows if r["reviews"] >= 150 and (int(r["appid"]) >= 2_500_000 or r["appid"] in charts)],
                             key=lambda r: -r["reviews"])[:200]
         pre_trend = sorted(rows, key=lambda r: -(r["ccu"] + (20000 if r["appid"] in most_played else 0)
-                                                 + (5000 if r["appid"] in two_weeks else 0)))[:50]
+                                                 + (5000 if r["appid"] in two_weeks else 0)))[:150]
 
-        def ranked(pre, weight_q, extra_filter=None, popularity=pop_all):
+        def ranked(pre, weight_q, extra_filter=None, popularity=pop_all, depth=TOP_TAGS):
             out = []
             for r in pre:
-                d = detail(r)
+                d = detail(r, depth)
                 if d is None or (extra_filter and not extra_filter(d)):
                     continue
                 out.append((weight_q * quality(r, d) + (1 - weight_q) * popularity(r), r, d))
@@ -319,7 +292,9 @@ def build(yt: YouTube | None = None) -> dict:
             "all_time": ranked(pre_all, 0.85),
             "recent": ranked(pre_recent, 0.75, lambda d: (d.get("released") or "") >= year_ago and not d.get("coming_soon"),
                              popularity=lambda r: common.log_scale(r["reviews"], max(x["reviews"] for x in pre_recent) or 1)),
-            "trending": ranked(pre_trend, 0.30, popularity=trend_pop),
+            # Trending only covers the ~130 games on Steam's activity charts, so a genre tag anywhere
+            # in a game's top 12 counts (top 7 elsewhere)
+            "trending": ranked(pre_trend, 0.30, popularity=trend_pop, depth=12),
         }
 
         rawg_by_name, rawg_lists = {}, {"all_time": [], "recent": []}
@@ -350,7 +325,7 @@ def build(yt: YouTube | None = None) -> dict:
                 "user": {"score": r["user"], "reviews": r["reviews"], "source": "Steam reviews",
                          "confidence": _confidence(r["reviews"])},
                 "players_yesterday": r["ccu"], "platforms": platforms,
-                "flags": [f for f, ids in flags.items() if r["appid"] in ids],
+                "flags": [f for f, tag in FLAG_TAGS.items() if tag in ((state["tags"].get(r["appid"]) or {}).get("t") or [])],
                 "genres": d.get("genres"), "score": round(score, 4), "why": why,
                 "video": video or None, "trailer": d.get("trailer"),
                 "links": [{"name": "Steam", "url": f"https://store.steampowered.com/app/{r['appid']}/"}]
@@ -386,7 +361,7 @@ def build(yt: YouTube | None = None) -> dict:
                 if key in steam_names or key in seen or not g.get("released"):
                     continue
                 seen.add(key)
-                card = _rawg_card(g, weight_q, max_added, flags_from=g.get("tags") or [])
+                card = _rawg_card(g, weight_q, max_added, flags_from=g.get("tags") or [], allow_unscored=ranking == "recent")
                 if card:
                     extra.append(card)
             merged = sorted(out[ranking] + extra, key=lambda c: -c["score"])[:20]
@@ -396,8 +371,11 @@ def build(yt: YouTube | None = None) -> dict:
 
         notes = {}
         if len(out["recent"]) < 20:
-            notes["recent"] = (f"Only {len(out['recent'])} games in this genre were confirmed as released in the last 12 months "
-                               "from Steam data" + ("." if rawg_key else "; the full list (incl. PS5) arrives with the RAWG key."))
+            notes["recent"] = (f"Only {len(out['recent'])} games in this genre were confirmed as released in the last 12 months"
+                               + ("." if rawg_key else "; the full list (incl. PS5) arrives with the RAWG key."))
+        if len(out["trending"]) < 10:
+            notes["trending"] = (f"Trending counts what people are playing on Steam this week; only {len(out['trending'])} "
+                                 f"{name.lower()} game{'s' if len(out['trending']) != 1 else ''} made Steam's activity charts.")
         if not rawg_key:
             notes["platforms"] = "Console platforms (incl. PS5) appear once the RAWG key is added; until then only Steam data is used."
         genres[gid] = {"name": name, **out, "notes": notes, "built_at": common.iso(now)}
@@ -409,4 +387,4 @@ def build(yt: YouTube | None = None) -> dict:
     common.save_json(STATE, state)
     if not genres:
         raise RuntimeError("no game data fetched")
-    return {"genres": genres, "flags": list(FLAG_TAGS), "sources": ["SteamSpy", "Steam store"] + (["RAWG"] if rawg_key else [])}
+    return {"genres": genres, "flags": list(FLAG_TAGS), "sources": (["RAWG"] if rawg_key else []) + ["Steam charts", "Steam store", "SteamSpy (per-game)"]}
