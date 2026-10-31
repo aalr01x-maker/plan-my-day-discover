@@ -62,7 +62,7 @@ SPORTS = {
                 "leagues": {"League of Legends": "league of legends, lol worlds, lck, lpl, lec, lta", "Counter-Strike": "counter strike, cs2, blast, iem, esl pro league, pgl, major",
                             "Valorant": "valorant, vct", "Overwatch": "overwatch, owcs"},
                 "feeds": ["https://www.hltv.org/rss/news"],
-                "channels": ["@lolesports=League of Legends", "@ESLCS=Counter-Strike", "@BLASTPremier=Counter-Strike", "@VALORANTEsports=Valorant"]},
+                "channels": ["@lolesports=League of Legends", "@ESLCS=Counter-Strike", "@BLASTPremier=Counter-Strike", "@VALORANTEsports=Valorant", "@ow_esports=Overwatch"]},
     "hockey": {"name": "Hockey", "icon": "🏒",
                "leagues": {"NHL": "nhl, stanley cup", "KHL": "khl", "IIHF": "iihf, ice hockey world championship"},
                "feeds": ["https://www.espn.com/espn/rss/nhl/news", "https://feeds.bbci.co.uk/sport/ice-hockey/rss.xml",
@@ -304,6 +304,32 @@ def _views(yt: YouTube, ids: list[str]) -> dict[str, int]:
     return views
 
 
+# promo and media-day uploads that use the word "highlights" but show no action
+NOT_HIGHLIGHT = re.compile(r"weigh[- ]?in|press conference|presser|face[- ]?off|media day|open workout|interview|countdown|"
+                           r"preview|trailer|promo|ticket|watch the full fight now", re.I)
+VERSUS = re.compile(r"(.+?)\s+(?:vs\.?|v\.?|versus)\s+(.+)", re.I)
+
+
+def _league_from_news(title: str, events: list[dict]) -> str | None:
+    """A fight video whose title doesn't name the belt ("Smith vs Puello Highlights"): the league that
+    trusted outlets' headlines give for those same two fighters, if any."""
+    m = VERSUS.search(title.split("|")[0])
+    if not m:
+        return None
+    sides = []
+    for side in m.groups():   # each fighter's names, e.g. {"canelo", "alvarez"}
+        words = {w for w in common.norm(side).split()[-3:] if len(w) > 2} - {"highlights", "full", "fight", "the", "and"}
+        if not words:
+            return None
+        sides.append(words)
+    for ev in events:
+        for a in ev["articles"]:
+            t = set(common.norm(a["title"]).split())
+            if a["league"] and all(side & t for side in sides):   # both fighters named in one headline
+                return a["league"]
+    return None
+
+
 HIGHLIGHT = re.compile(r"highlight|best moments|top \d+|top plays|goals|knockout|every |full fight|extended|recap|finish|resumen|обзор|лучшие моменты", re.I)
 SEASON = re.compile(r"\b(?:19|20)(\d\d)/(\d\d)\b")   # "2019/20": an archive replay, unless it's this season
 
@@ -350,8 +376,10 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                     if not (HIGHLIGHT.search(v["title"]) or (
                             sport.get("highlight_extra") and re.search(sport["highlight_extra"], v["title"], re.I))):
                         continue
+                    if NOT_HIGHLIGHT.search(v["title"]):
+                        continue
                     fixed = channel_league[handle]
-                    league = fixed if fixed and fixed != "*" else _league(v["title"], sport)
+                    league = fixed if fixed and fixed != "*" else (_league(v["title"], sport) or _league_from_news(v["title"], events))
                     if fixed == "*" and not league:
                         continue
                     videos.append({**v, "league": league, "when": published})
