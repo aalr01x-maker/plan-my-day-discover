@@ -70,11 +70,11 @@ class YouTube:
         return out
 
     def search(self, query: str, channel_id: str | None = None, after=None, max_age_days: int = 30,
-               max_results: int = 5) -> list[dict]:
+               max_results: int = 5, order: str | None = None, category: str | None = None) -> list[dict]:
         """Cached search (100 units). Used only where uploads lists can't cover it."""
         if not self.key:
             return []
-        key = f"{query}|{channel_id}" + (f"|{max_results}" if max_results != 5 else "")
+        key = f"{query}|{channel_id}" + (f"|{max_results}" if max_results != 5 else "") + (f"|{order}|{category}" if order or category else "")
         hit = self.cache["search"].get(key)
         if hit and common.within(common.parse_time(hit["at"]), max_age_days * 24):
             return hit["items"]
@@ -83,6 +83,10 @@ class YouTube:
             params["channelId"] = channel_id
         if after:
             params["publishedAfter"] = common.iso(after)
+        if order:
+            params["order"] = order
+        if category:
+            params["videoCategoryId"] = category
         try:
             data = self.get("search", params)
         except common.FetchError as exc:

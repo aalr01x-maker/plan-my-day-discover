@@ -494,6 +494,54 @@ def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int
     return {"id": best["id"], "title": best["title"], "channel": best.get("channel"), "published": best.get("published")}
 
 
+RECENT_SEARCHES_PER_RUN = 8   # 100 units each; each genre's search is reused for 7 days
+JUNK = re.compile(r"\b(official (music )?video|official audio|official visualizer|official lyric video|lyric video|lyrics|"
+                  r"visualizer|audio|video|clip officiel|m/v|mv|4k|hd|explicit|clean)\b", re.I)
+
+
+def _youtube_recent(yt: YouTube, gid: str, name: str, after, key: str | None, artist_tags: dict,
+                    tag_budget: list[int], budget: list[int]) -> list[dict]:
+    """The genre's most-viewed official music videos of the last 12 months, straight from YouTube
+    (owner, 2 Nov 2026: Best Recent missed the year's big hits that the music databases hadn't linked).
+    Official = an artist channel, VEVO or the auto-generated "Topic" channel; the artist must belong to
+    the genre on Last.fm."""
+    query = f"{name.split(' /')[0]} official music video"
+    cache_key = f"{query}|None|50|viewCount|10"
+    cached = (yt.cache.get("search") or {}).get(cache_key)
+    if not (cached and common.within(common.parse_time(cached["at"]), 7 * 24)):
+        if budget[0] <= 0 or yt.exhausted or yt.units >= YOUTUBE_CEILING:
+            return []
+        budget[0] -= 1
+    found = yt.search(query, after=after, max_age_days=7, max_results=50, order="viewCount", category="10")
+    out = []
+    for v in found:
+        title, channel = v.get("title") or "", v.get("channel") or ""
+        official = channel.endswith("VEVO") or channel.endswith(" - Topic") or "official" in title.lower()
+        if not official:
+            continue
+        if " - " in title:
+            artist, song = title.split(" - ", 1)
+        else:
+            artist, song = re.sub(r"(VEVO| - Topic)$", "", channel).strip(), title
+        song = re.sub(r"[\(\[][^\)\]]*[\)\]]", "", song)   # "(Official Video)", "[Explicit]"
+        song = JUNK.sub("", song).strip(" -|\"'")
+        artist = re.sub(r"\s*(ft\.?|feat\.?|x |&).*$", "", artist, flags=re.I).strip()
+        if not song or not artist:
+            continue
+        # the artist name must match the channel (no fan or label re-uploads of someone else's song)
+        ch = common.norm(re.sub(r"(VEVO| - Topic)$", "", channel)).replace(" ", "")
+        an = common.norm(artist).replace(" ", "")   # "KendrickLamarVEVO" vs "Kendrick Lamar"
+        if not an or not ch or not (an in ch or ch in an):
+            continue
+        tags = _artist_tags_lastfm(artist, key, artist_tags, tag_budget)
+        if tags is None or not re.search(FAMILY[gid], tags):
+            continue
+        out.append({"title": song, "artist": artist, "album": None, "released": (v.get("published") or "")[:10] or None,
+                    "cover": v.get("thumb"), "artist_youtube": None,
+                    "video": {"id": v["id"], "title": title, "channel": channel, "published": v.get("published")}})
+    return out
+
+
 def _youtube_views(yt: YouTube, ids: list[str]) -> dict[str, int]:
     out = {}
     for i in range(0, len(ids), 50):
@@ -616,8 +664,19 @@ def build(yt: YouTube | None = None) -> dict:
                     continue
             dz_meta[sid] = song
             pools.setdefault(gid, {})[sid] = 1.0
+    # YouTube's own most-viewed new music videos per genre (Best Recent's big hits)
+    yt_meta: dict[str, dict] = {}
+    if yt and yt.available:
+        rbudget = [RECENT_SEARCHES_PER_RUN]
+        for gid, (gname, _) in GENRES.items():
+            if gid == "all":
+                continue
+            for song in _youtube_recent(yt, gid, gname, now - timedelta(days=365), key, artist_tags, tag_budget, rbudget):
+                sid = "yt:" + song["video"]["id"]
+                yt_meta[sid] = song
+                pools.setdefault(gid, {})[sid] = 1.0
     common.log(f"music: {sum(len(p) for p in pools.values())} genre candidates (ListenBrainz, MusicBrainz, Last.fm, "
-               f"Deezer {len(dz_meta)})")
+               f"Deezer {len(dz_meta)}, YouTube new releases {len(yt_meta)})")
     week_chart = _week_chart()
     common.log(f"music: {len(every)} candidate songs, popularity for {len(pop)}")
 
@@ -654,7 +713,13 @@ def build(yt: YouTube | None = None) -> dict:
                     if same not in seen or seen[same]["users"] < song["users"]:
                         seen[same] = song
         for mbid in (pools.get(gid) or {}) if gid != "all" else ():
-            if mbid in dz_meta:   # Deezer chart song: Deezer's own genre decides; its rank pre-sorts
+            if mbid in yt_meta:   # YouTube new-release hit: its video is already known; views pre-sort
+                meta = {k: v for k, v in yt_meta[mbid].items() if k != "video"}
+                state["yt"].setdefault(skey(meta), yt_meta[mbid]["video"])
+                vh = state["yt_views"].get(yt_meta[mbid]["video"]["id"]) or {}
+                p = {"users": max(1, (vh[max(vh)] if vh else 1_000_000) // 50), "listens": 0}
+                fit = 1.0
+            elif mbid in dz_meta:   # Deezer chart song: Deezer's own genre decides; its rank pre-sorts
                 meta = dz_meta[mbid]
                 p = {"users": max(1, meta["rank"] // 2000), "listens": 0}
                 fit = 1.0
