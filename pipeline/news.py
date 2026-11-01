@@ -1,4 +1,4 @@
-"""Optimal News: Top 3 per region (plus a Business tab), Today (24 h), This Week (7 days) and
+"""Optimal News: Top 10 for World, Top 3 per region (plus a Business tab), Today (24 h), This Week (7 days) and
 This Month (30 days). The month view also draws on every earlier daily ranking (saved in state),
 so stories that dominated two weeks ago still count after their articles drop out of the feeds.
 
@@ -302,7 +302,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             pool = [ev for ev in events if common.within(ev["latest"], window, now)
                     and (tab == "world" or (ev["business"] if tab == "business" else tab in ev["regions"]))]
             pool.sort(key=lambda e: _score(e, now, window), reverse=True)
-            for ev in pool[:8]:
+            for ev in pool[:15 if tab == "world" else 8]:   # World shows 10 (owner, 2 Nov 2026)
                 ev["candidate"] = True
     _ai_enrich(events, ai)
 
@@ -356,14 +356,17 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             return True
         return len(signature(a) & signature(b)) >= 2
 
-    def top3(pool: list[dict]) -> list[dict]:
+    def top3(pool: list[dict], n: int = 3) -> list[dict]:
         picked: list[dict] = []
         for ev in pool:
             if not any(same_story(ev, p) for p in picked):
                 picked.append(ev)
-            if len(picked) == 3:
+            if len(picked) == n:
                 break
         return picked
+
+    def size(tab: str) -> int:   # owner, 2 Nov 2026: World Top 10; every region and Business keep Top 3
+        return 10 if tab == "world" else 3
 
     def in_tab(ev: dict, tab: str) -> bool:
         ai_row = ev.get("ai") or {}
@@ -409,12 +412,13 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                     "required": ["picks"], "additionalProperties": False}
 
     def month_top3(region: str) -> list[dict]:
+        n = size(region)
         pool = [(ev, _score(ev, now, 720)) for ev in events if in_tab(ev, region)]
         pool += [(a, _score_parts(a["parts"], now, 720)) for k, a in archive.items()
                  if k not in live_ids and region in a["tabs"]]
         pool.sort(key=lambda x: -x[1])
         picked = []
-        limit = 25 if ai and ai.available else 3   # the AI editor picks 3 from the 25 strongest
+        limit = (25 + 2 * n if n > 3 else 25) if ai and ai.available else n   # the AI editor picks n from the strongest
         for item, sc in pool:
             if "parts" in item:
                 if same_as_archived(item, picked):
@@ -427,19 +431,21 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             picked.append(item)
             if len(picked) == limit:
                 break
-        if len(picked) > 3:
+        if len(picked) > n:
             def text(item):
                 if "parts" in item:
                     return f"{item['card']['headline']}: {(item['card'].get('summary') or '')[:220]}"
                 return f"{item['lead']['title']}: {((item.get('ai') or {}).get('summary') or item['lead']['summary'] or '')[:220]}"
             ids = [str(i) for i in range(len(picked))]
             listing = "\n".join(f"id={i} :: {text(it)}" for i, it in zip(ids, picked))
-            res = ai.json_call("news-month:" + common.fingerprint(region, listing), MONTH_SYSTEM,
+            res = ai.json_call("news-month:" + common.fingerprint(region, listing, n), MONTH_SYSTEM.replace("the 3 most", f"the {n} most")
+                               .replace("The 3 picks must be 3 different", f"The {n} picks must be {n} different")
+                               .replace("ids of your 3 picks", f"ids of your {n} picks"),
                                f"Section: {TAB_NAMES[region]}\n{listing}", MONTH_SCHEMA, max_tokens=300)
             chosen = [int(i) for i in (res or {}).get("picks", []) if i in ids]
-            chosen = list(dict.fromkeys(chosen))[:3]
+            chosen = list(dict.fromkeys(chosen))[:n]
             picked = [picked[i] for i in chosen] + [x for i, x in enumerate(picked) if i not in chosen]
-            picked = picked[:3]
+            picked = picked[:n]
         out = []
         for item in picked:
             if "parts" in item:
@@ -460,13 +466,14 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                 if in_tab(ev, region):
                     pool.append(ev)
             pool.sort(key=lambda e: _score(e, now, window), reverse=True)
-            picked = top3(pool)
-            if label == "today" and len(picked) < 3:
+            n = size(region)
+            picked = top3(pool, n)
+            if label == "today" and len(picked) < n:
                 # a quiet day for this region: fill Today with its most recent stories (dated on the card)
                 older = sorted((ev for ev in events if in_tab(ev, region) and ev not in picked
                                 and common.within(ev["latest"], 72, now)), key=lambda e: e["latest"], reverse=True)
                 for ev in older:
-                    if len(picked) >= 3:
+                    if len(picked) >= n:
                         break
                     if not any(same_story(ev, p) for p in picked):
                         picked.append(ev)

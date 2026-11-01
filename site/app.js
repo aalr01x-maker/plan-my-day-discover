@@ -268,9 +268,10 @@ async function news(parts, q) {
   const tab = data.regions[parts[1]] ? parts[1] : "world";
   const period = ["week", "month"].includes(parts[2]) ? parts[2] : "today";
   tabsRow($("tabs"), tabs, tab, (id) => go(["news", id, period], null));
-  segGroups([{ label: "Period", items: NEWS_PERIODS, selected: period, onPick: (id) => go(["news", tab, id], null) }]);
+  const periods = tab === "world" ? NEWS_PERIODS.map(([k, v]) => [k, v.replace("Top 3", "Top 10")]) : NEWS_PERIODS;   // World: Top 10 (owner, 2 Nov)
+  segGroups([{ label: "Period", items: periods, selected: period, onPick: (id) => go(["news", tab, id], null) }]);
   $("filters").innerHTML = "";
-  heading("news", [data.regions[tab].name, label(NEWS_PERIODS, period)]);
+  heading("news", [data.regions[tab].name, label(periods, period)]);
   note(`${data.regions[tab].name} stories from the ${{ today: "last 24 hours", week: "last 7 days", month: "last 30 days" }[period]}` +
     (tab === "business" ? " about business, the economy, markets and companies" : tab === "world" ? " from every region" : "") +
     (period === "month" ? ", ranked by how many outlets covered it (40%), significance (35%), source reliability (15%) and recency (10%). " :
