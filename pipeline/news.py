@@ -438,7 +438,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                 return f"{item['lead']['title']}: {((item.get('ai') or {}).get('summary') or item['lead']['summary'] or '')[:220]}"
             ids = [str(i) for i in range(len(picked))]
             listing = "\n".join(f"id={i} :: {text(it)}" for i, it in zip(ids, picked))
-            res = ai.json_call("news-month:" + common.fingerprint(region, listing, n), MONTH_SYSTEM.replace("the 3 most", f"the {n} most")
+            res = ai.json_call("news-month:" + common.fingerprint(region, listing, str(n)), MONTH_SYSTEM.replace("the 3 most", f"the {n} most")
                                .replace("The 3 picks must be 3 different", f"The {n} picks must be {n} different")
                                .replace("ids of your 3 picks", f"ids of your {n} picks"),
                                f"Section: {TAB_NAMES[region]}\n{listing}", MONTH_SCHEMA, max_tokens=300)
