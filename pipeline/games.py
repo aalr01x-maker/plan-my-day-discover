@@ -216,6 +216,29 @@ def _rawg(key: str, params: dict, extra: dict, pages: int = 2) -> list[dict]:
     return out
 
 
+RAWG_DATES_PER_RUN = 200
+
+
+def _first_release(key: str | None, name: str, cache: dict, budget: list[int]) -> str | None:
+    """The game's ORIGINAL release date per RAWG (Early Access launch included). Steam's own date is
+    the 1.0 launch, so Valheim (2021) or Palworld (2024) looked new in 2026 (owner, 2 Nov 2026).
+    Cached 60 days; None when unknown."""
+    k = common.norm(name).strip()
+    hit = cache.get(k)
+    if hit and common.within(common.parse_time(hit["at"]), 60 * 24):
+        return hit["d"]
+    if not key or budget[0] <= 0:
+        return hit["d"] if hit else None
+    budget[0] -= 1
+    try:
+        res = (common.get(f"{RAWG}/games", params={"key": key, "search": name, "search_exact": "true", "page_size": 5}) or {}).get("results") or []
+    except common.FetchError:
+        return hit["d"] if hit else None
+    best = next((g for g in res if common.norm(g.get("name") or "").strip() == k), None)
+    cache[k] = {"at": common.iso(common.now_utc()), "d": (best or {}).get("released")}
+    return cache[k]["d"]
+
+
 def _rawg_stores(key: str, game_id: int, cache: dict) -> dict:
     """A RAWG game's exact store pages: {"steam": appid or None, "ps": PlayStation Store url or None}.
     Store links never change, so they are cached for good."""
@@ -325,6 +348,9 @@ def build(yt: YouTube | None = None) -> dict:
             d = _details(r["appid"], state["details"], budget)
             if not d or d.get("type") != "game":
                 return None
+            # apps Steam files as software/utilities (crosshair overlays, wallpaper tools) aren't games
+            if set(d.get("genres") or []) & (NOT_GAMES | {"Software Training", "Utilities", "Web Publishing", "Education"}):
+                return None
             return d
 
         def quality(r, d=None):
@@ -382,6 +408,12 @@ def build(yt: YouTube | None = None) -> dict:
                                                  + (5000 if r["appid"] in two_weeks else 0)))[:150]
 
         score_recent = score_recent_factory(pre_recent)
+        rawg_dates, rawg_budget = state.setdefault("rawg_first_release", {}), [RAWG_DATES_PER_RUN]
+
+        def _was_out_before(d) -> bool:
+            """Best Recent: a 1.0 launch of a game that was already out (Early Access) years ago."""
+            first = _first_release(rawg_key, d.get("name") or "", rawg_dates, rawg_budget)
+            return bool(first and first < year_ago and first < (d.get("released") or "9999"))
 
         def ranked(pre, scorer, extra_filter=None, depth=TOP_TAGS):
             out = []
@@ -395,7 +427,8 @@ def build(yt: YouTube | None = None) -> dict:
 
         lists = {
             "all_time": ranked(pre_all, score_all),
-            "recent": ranked(pre_recent, score_recent, lambda d: (d.get("released") or "") >= year_ago and not d.get("coming_soon")),
+            "recent": ranked(pre_recent, score_recent, lambda d: (d.get("released") or "") >= year_ago and not d.get("coming_soon")
+                             and not _was_out_before(d)),
             # Trending only covers the ~130 games on Steam's activity charts, so a genre tag anywhere
             # in a game's top 12 counts (top 7 elsewhere)
             "trending": ranked(pre_trend, score_trend, depth=12),
@@ -478,6 +511,10 @@ def build(yt: YouTube | None = None) -> dict:
                     d = _details(appid, state["details"], budget)
                     if user is not None and d and d.get("type") == "game":
                         if ranking == "recent" and not ((d.get("released") or g.get("released") or "") >= year_ago):
+                            continue
+                        if ranking == "recent" and (g.get("released") or "9999") < year_ago:
+                            continue   # RAWG's original (Early Access) release is over a year old
+                        if set(d.get("genres") or []) & (NOT_GAMES | {"Software Training", "Utilities", "Education"}):
                             continue
                         r = {"appid": appid, "name": a.get("name") or g["name"], "developer": a.get("developer"),
                              "user": user, "reviews": n, "ccu": int(a.get("ccu") or 0), "owners": a.get("owners")}
