@@ -12,7 +12,7 @@ const SECTIONS = [
 const RANKINGS = [["all_time", "Best of All Time"], ["recent", "Best Recent"], ["trending", "Trending"]];
 const NEWS_PERIODS = [["today", "Top 3 Today"], ["week", "Top 3 This Week"], ["month", "Top 3 This Month"]];
 const SPORT_VIEWS = [["highlights", "Top Highlights"], ["results", "Major Results & Events"], ["latest", "Latest (24h)"]];
-const MEDIA = [["movie", "Movies"], ["tv", "TV Shows"]];
+const MEDIA = [["tv", "TV Shows"], ["movie", "Movies"]];   // TV first (owner, 1 Nov)
 const STALE_HOURS = 30;
 
 const $ = (id) => document.getElementById(id);
@@ -302,7 +302,7 @@ function newsDetail(s) {
 /* ---------- Movies & TV ---------- */
 async function movies(parts) {
   const data = await load("movies");
-  const media = parts[1] === "tv" ? "tv" : "movie";
+  const media = parts[1] === "movie" ? "movie" : "tv";   // TV Shows opens by default
   const set = media === "tv" ? data.tv : data.movies;
   const tabs = Object.entries(set).map(([id, t]) => [id, t.name]);
   const genre = set[parts[2]] ? parts[2] : tabs[0]?.[0];
