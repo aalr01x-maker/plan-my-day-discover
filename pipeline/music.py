@@ -851,7 +851,9 @@ def build(yt: YouTube | None = None) -> dict:
             if g and g[0] > 0:
                 return g[0], f"+{g[0]:,.0f} YouTube views per week (measured over {g[1]} day{'s' if g[1] != 1 else ''})"
             up = common.parse_time(x["yt"].get("published"))
-            if up and (now - up).days <= 730:
+            # the lifetime-average fallback only for songs that are actually new: an old hit's fresh
+            # re-upload ("Right Round", 2009, uploaded Feb 2026) must not look like a new trend (owner, 2 Nov)
+            if up and (now - up).days <= 730 and (x.get("released") or "0") >= two_years:
                 weeks = max(1.0, (now - up).days / 7)
                 return x["yt"]["views"] / weeks, f"{x['yt']['views'] / weeks:,.0f} YouTube views per week since it was posted ({up:%b %Y})"
             return None
