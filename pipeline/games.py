@@ -1,4 +1,4 @@
-"""Gaming: 11 genre tabs x Best of All Time / Best Recent (12 months) / Trending (7 days), Top 20.
+"""Gaming: 11 genre tabs x Best of All Time / Best Recent (12 months) / Trending, Top 30 shown.
 
 Steam only (owner, 31 Oct 2026): every game is ranked by its Steam player reviews; games not
 on Steam (Nintendo, PlayStation exclusives) are left out, and critic scores aren't used.
@@ -62,7 +62,7 @@ GENRES = {
 }
 MODES = ("story", "online")
 LOCAL_ONLY = {"Shared/Split Screen", "Shared/Split Screen PvP", "Shared/Split Screen Co-op", "LAN PvP", "LAN Co-op"}
-LIST_SIZE = 60   # the site shows 20; the rest let a Story/Online filter still fill 20
+LIST_SIZE = 60   # the site shows the top 30 (owner, 2 Nov 2026)
 
 
 def _modes(categories: list[str] | None, tags: list[str] | None) -> list[str]:
@@ -545,10 +545,10 @@ def build(yt: YouTube | None = None) -> dict:
                 c["rank"] = i + 1
 
         notes = {}
-        if len(out["recent"]) < 20:
+        if len(out["recent"]) < 30:
             notes["recent"] = (f"Only {len(out['recent'])} games in this genre were confirmed as released in the last 12 months"
                                + ("." if rawg_key else "; the full list (incl. PS5) arrives with the RAWG key."))
-        if len(out["trending"]) < 20:
+        if len(out["trending"]) < 30:
             notes["trending"] = (f"Only {len(out['trending'])} {name.lower()} game{'s' if len(out['trending']) != 1 else ''} "
                                  f"have 50+ people playing on Steam right now.")
         if not rawg_key:

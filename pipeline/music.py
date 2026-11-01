@@ -1,4 +1,4 @@
-"""Music: the owner's genres, three Top 20 lists each.
+"""Music: the owner's genres, three lists each: Top 30 for All and the 14 broad genres, Top 20 for the niche ones.
 
 Every list is ranked by YouTube alone (owner, 31 Oct 2026); tags only decide which
 genre a song belongs to:
@@ -90,6 +90,15 @@ FAMILY = {
     "arabic": r"arab|khaleeji|\brai\b|egypt|leban|middle east|shaabi|mahraganat|levant|syria|iraq|saudi|kuwait|morocc|algeri|tunisi",
 }
 STRONG_FIT = 0.8
+
+# owner, 2 Nov 2026: Top 30 for All and the 14 broad genres, Top 20 for the 8 niche ones
+BIG_GENRES = {"all", "rap", "rock", "rnb", "edm-techno", "country", "jazz", "classical", "blues", "reggae", "indie",
+              "alternative", "house", "trap", "arabic"}
+
+
+def list_size(gid: str) -> int:
+    return 30 if gid in BIG_GENRES else 20
+
 
 PER_ARTIST = 2            # a list shows at most 2 songs by one artist
 TAG_LEVELS = {"recording": 1.0, "release_group": 0.8, "artist": 0.6}
@@ -763,11 +772,11 @@ def build(yt: YouTube | None = None) -> dict:
             return out
 
         top_internal = max((internal(x) for x in songs), default=1) or 1
-        at = capped(sorted(songs, key=lambda x: -(0.85 * common.log_scale(internal(x), top_internal) + 0.15 * x["fit"])), 40, 3)
+        at = capped(sorted(songs, key=lambda x: -(0.85 * common.log_scale(internal(x), top_internal) + 0.15 * x["fit"])), 2 * list_size(gid), 3)
         rc = capped(sorted([x for x in songs if len(x.get("released") or "") == 10 and x["released"] >= year_ago],
-                           key=lambda x: -internal(x)), 40, 3)
+                           key=lambda x: -internal(x)), 2 * list_size(gid), 3)
         tr = capped(sorted([x for x in songs if (x.get("released") or "") >= two_years
-                            or week_chart.get(x["mbid"]) or week_chart.get(skey(x))], key=lambda x: -internal(x)), 30, 3)
+                            or week_chart.get(x["mbid"]) or week_chart.get(skey(x))], key=lambda x: -internal(x)), list_size(gid) + 10, 3)
         prepared[gid] = (name, tags, songs, at, rc, tr)
     prepared = {g: prepared[g] for g in GENRES}   # "All" back to the front
 
@@ -841,8 +850,9 @@ def build(yt: YouTube | None = None) -> dict:
         max_a = max((x["yt"]["views"] for x in a_rows), default=1)
         max_r = max((x["yt"]["views"] for x in r_rows), default=1)
         # ranked by YouTube alone; genre tags only decide membership
-        all_time = top(a_rows, lambda x: x["yt"]["views"])
-        recent = top(r_rows, lambda x: x["yt"]["views"], 40)   # trimmed to 20 after the Apple date check below
+        n = list_size(gid)
+        all_time = top(a_rows, lambda x: x["yt"]["views"], n)
+        recent = top(r_rows, lambda x: x["yt"]["views"], 2 * n)   # trimmed to n after the Apple date check below
 
         # Trending: views gained per week (between our daily counts), else views per week since the
         # video went up when it is under 2 years old
@@ -865,7 +875,7 @@ def build(yt: YouTube | None = None) -> dict:
                 t_rows.append({**x, "mom": m})
         max_m = max((x["mom"][0] for x in t_rows), default=1)
         max_t = max((x["yt"]["views"] for x in t_rows), default=1)
-        trending = top(t_rows, lambda x: x["mom"][0])   # views gained per week only (owner, 2 Nov 2026)
+        trending = top(t_rows, lambda x: x["mom"][0], n)   # views gained per week only (owner, 2 Nov 2026)
 
         def card(x: dict, rank: int, why: str) -> dict:
             apple = _itunes(x, state["itunes"], itunes_budget)
@@ -886,15 +896,15 @@ def build(yt: YouTube | None = None) -> dict:
             # owner, 2 Nov 2026: no padding with tiny songs -- a recent song needs at least 2% of the genre's
             # top recent song's views (and 50K), so a short list beats a wrong one
             "recent": _renumber([c for c in (card(x, 0, "") for x in recent) if (c["released"] or "") >= year_ago
-                                 and c["metrics"]["views"] >= max(50_000, 0.02 * max((y["yt"]["views"] for y in recent), default=0))][:20]),
+                                 and c["metrics"]["views"] >= max(50_000, 0.02 * max((y["yt"]["views"] for y in recent), default=0))][:n]),
             "trending": [card(x, i + 1, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.") for i, x in enumerate(trending)],
         }
         notes = {}
         for k, lst in lists.items():
-            if len(lst) < 20 and pending:
+            if len(lst) < n and pending:
                 notes[k] = (f"{len(lst)} songs verified on YouTube so far; more are looked up every day "
                             f"(YouTube's free limit allows about {YOUTUBE_LOOKUPS} a day), so this list grows over the first days.")
-        if len(lists["recent"]) < 20 and not notes.get("recent"):
+        if len(lists["recent"]) < n and not notes.get("recent"):
             notes["recent"] = f"{len(lists['recent'])} songs in this genre from the last 12 months have an official YouTube video."
         genres[gid] = {"name": name, "tags": tags, **lists, "notes": notes}
         common.log(f"music {gid}: {len(songs)} songs; {len(lists['all_time'])}/{len(lists['recent'])}/{len(lists['trending'])}")

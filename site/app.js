@@ -370,7 +370,7 @@ async function gaming(parts, q) {
   segGroups([{ label: "Ranking", items: RANKINGS, selected: ranking, onPick: (id) => go(["gaming", genre, id], null) }]);
   $("filters").innerHTML = "";
   const g = data.genres[genre];
-  const list = (g?.[ranking] || []).slice(0, 20);
+  const list = (g?.[ranking] || []).slice(0, 30);   // Top 30 (owner, 2 Nov 2026)
   heading("gaming", [g?.name, label(RANKINGS, ranking)]);
   note([`${g?.name || ""} games:`, { all_time: "Best of All Time: one third Steam review score (weighted so a few reviews can't top it), one third players on Steam right now, one third number of reviews.",
     recent: "Best Recent: released in the last 12 months; 55% Steam review score + 30% number of reviews + 15% player retention (owners still playing).",
@@ -534,7 +534,7 @@ async function search(parts, q) {
   const [n, m, g, mu, sp] = await Promise.allSettled(SECTIONS.map((s) => load(s.file)));
   if (n.value) for (const [rid, r] of Object.entries(n.value.regions)) for (const p of ["today", "week", "month"]) for (const s of r[p] || []) if (hit(s)) add(`🌍 ${r.name}`, ["news", rid, p], s.id, s.headline);
   if (m.value) for (const [media, set] of [["movie", m.value.movies], ["tv", m.value.tv]]) for (const [gid, gg] of Object.entries(set)) for (const [rk] of RANKINGS) for (const x of gg[rk]) if (hit(x.title)) add(`🎬 ${gg.name}`, ["movies", media, gid, rk], x.id, x.title);
-  if (g.value) for (const [gid, gg] of Object.entries(g.value.genres)) for (const [rk] of RANKINGS) for (const x of gg[rk].slice(0, 20)) if (hit(x.title)) add(`🎮 ${gg.name}`, ["gaming", gid, rk], x.id, x.title);
+  if (g.value) for (const [gid, gg] of Object.entries(g.value.genres)) for (const [rk] of RANKINGS) for (const x of gg[rk].slice(0, 30)) if (hit(x.title)) add(`🎮 ${gg.name}`, ["gaming", gid, rk], x.id, x.title);
   if (mu.value) for (const [gid, gg] of Object.entries(mu.value.genres)) for (const [rk] of RANKINGS) for (const x of gg[rk]) if (hit(x.title + " " + x.artist)) add(`🎵 ${gg.name}`, ["music", gid, rk], x.id, `${x.artist} – ${x.title}`);
   if (sp.value) for (const [sid, s] of Object.entries(sp.value.sports)) for (const v of ["results", "latest"]) for (const x of s[v]) if (hit(x.title)) add(`🏆 ${s.name}`, ["sports", sid, v], x.id, x.title);
   const seen = new Set();
