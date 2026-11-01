@@ -360,22 +360,26 @@ async function gaming(parts, q) {
   const tabs = Object.entries(data.genres).map(([id, g]) => [id, g.name]);
   const genre = data.genres[parts[1]] ? parts[1] : tabs[0]?.[0];
   const ranking = RANKINGS.some(([r]) => r === parts[2]) ? parts[2] : "all_time";
-  const flags = (q.get("f") || "").split(",").filter(Boolean);
+  const flags = (q.get("f") || "").split(",").filter((f) => MODES.some(([m]) => m === f));   // old links (indie, ...) ignored
   tabsRow($("tabs"), tabs, genre, (id) => go(["gaming", id, ranking], flagQ(flags)));
   segGroups([{ label: "Ranking", items: RANKINGS, selected: ranking, onPick: (id) => go(["gaming", genre, id], flagQ(flags)) }]);
-  chips([["indie", "Indie"], ["survival", "Survival"], ["multiplayer", "Multiplayer"]], flags, (id) => {
+  // Story = has a story/single-player mode; Online = has online multiplayer. Both picked = games with both.
+  chips(MODES, flags, (id) => {
     const next = flags.includes(id) ? flags.filter((f) => f !== id) : [...flags, id];
     go(["gaming", genre, ranking], flagQ(next), true);
   });
   const g = data.genres[genre];
-  const list = (g?.[ranking] || []).filter((x) => flags.every((f) => x.flags.includes(f)));
-  heading("gaming", [g?.name, label(RANKINGS, ranking), ...flags.map((f) => f[0].toUpperCase() + f.slice(1))]);
+  // each list ships extra games, so a filtered view still gets its own top 20, numbered from 1
+  const list = (g?.[ranking] || []).filter((x) => flags.every((f) => x.flags.includes(f))).slice(0, 20)
+    .map((x, i) => (flags.length ? { ...x, rank: i + 1 } : x));
+  heading("gaming", [g?.name, label(RANKINGS, ranking), ...flags.map((f) => label(MODES, f))]);
   note([`${g?.name || ""} games:`, { all_time: "Best of All Time: 85% Steam player reviews (weighted by review count) + 15% popularity.",
     recent: "Best Recent: released in the last 12 months; 75% Steam player reviews + 25% popularity.",
     trending: "Trending: Steam players right now and this week's change; 70% popularity + 30% Steam player reviews." }[ranking], g?.notes?.stale, g?.notes?.[ranking], g?.notes?.platforms].filter(Boolean).join(" "));
   paint(list, gameCard, gameDetail, flags.length ? "No games match these filters in this list." : "No games here yet.");
   return ["gaming", genre, ranking];
 }
+const MODES = [["story", "Story mode"], ["online", "Online"]];
 const flagQ = (flags) => { const q = new URLSearchParams(); if (flags.length) q.set("f", flags.join(",")); return q; };
 function scoreBadges(x) {
   const u = x.user;
@@ -389,7 +393,7 @@ function gameCard(x) {
     <div class="body"><h3 class="title"><span class="rank">#${x.rank}</span>${esc(x.title)}</h3>
     <div class="meta">${x.released ? kuwait(x.released, false) : ""} · ${esc(x.platforms.join(", "))}</div>
     ${scoreBadges(x)}
-    <div class="badges">${x.flags.map((f) => `<span class="badge">${esc(f)}</span>`).join("")}</div>${why(x.why)}</div></article>`;
+    <div class="badges">${x.flags.filter((f) => MODES.some(([m]) => m === f)).map((f) => `<span class="badge">${esc(label(MODES, f))}</span>`).join("")}</div>${why(x.why)}</div></article>`;
 }
 function gameDetail(x) {
   return `<div class="detail"><h2 id="sheetTitle">${esc(x.title)}</h2>
@@ -500,7 +504,7 @@ async function search(parts, q) {
   const [n, m, g, mu, sp] = await Promise.allSettled(SECTIONS.map((s) => load(s.file)));
   if (n.value) for (const [rid, r] of Object.entries(n.value.regions)) for (const p of ["today", "week", "month"]) for (const s of r[p] || []) if (hit(s)) add(`🌍 ${r.name}`, ["news", rid, p], s.id, s.headline);
   if (m.value) for (const [media, set] of [["movie", m.value.movies], ["tv", m.value.tv]]) for (const [gid, gg] of Object.entries(set)) for (const [rk] of RANKINGS) for (const x of gg[rk]) if (hit(x.title)) add(`🎬 ${gg.name}`, ["movies", media, gid, rk], x.id, x.title);
-  if (g.value) for (const [gid, gg] of Object.entries(g.value.genres)) for (const [rk] of RANKINGS) for (const x of gg[rk]) if (hit(x.title)) add(`🎮 ${gg.name}`, ["gaming", gid, rk], x.id, x.title);
+  if (g.value) for (const [gid, gg] of Object.entries(g.value.genres)) for (const [rk] of RANKINGS) for (const x of gg[rk].slice(0, 20)) if (hit(x.title)) add(`🎮 ${gg.name}`, ["gaming", gid, rk], x.id, x.title);
   if (mu.value) for (const [gid, gg] of Object.entries(mu.value.genres)) for (const [rk] of RANKINGS) for (const x of gg[rk]) if (hit(x.title + " " + x.artist)) add(`🎵 ${gg.name}`, ["music", gid, rk], x.id, `${x.artist} – ${x.title}`);
   if (sp.value) for (const [sid, s] of Object.entries(sp.value.sports)) for (const v of ["results", "latest"]) for (const x of s[v]) if (hit(x.title)) add(`🏆 ${s.name}`, ["sports", sid, v], x.id, x.title);
   const seen = new Set();

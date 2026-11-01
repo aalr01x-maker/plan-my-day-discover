@@ -18,7 +18,9 @@ with last week's rank; 2-week top 100) for Trending, Steam store (release dates,
 trailers, store links) and SteamSpy per-game data (Steam review counts,
 player tags, cached 30 days). SteamSpy's genre lists are no longer used: that
 endpoint stopped answering on 31 Oct 2026.
-Indie / Survival / Multiplayer are filter tags, not tabs.
+Story / Online are filter modes, not tabs (owner, 1 Nov 2026): Story = has a single-player/story mode,
+Online = has online multiplayer; a game with both shows under each, a story-only game never under Online.
+Each list ships up to LIST_SIZE games so a filtered view still gets its own full top 20.
 
 A game belongs to a genre tab only when that genre is among the top 7 player tags
 of the game on Steam (SteamSpy tag lists alone are too loose: any game tagged
@@ -53,7 +55,29 @@ GENRES = {
     "simulation": ("Simulation", ["Simulation"], {"genres": "simulation"}),
     "horror": ("Horror", ["Horror"], {"tags": "horror"}),
 }
-FLAG_TAGS = {"indie": "Indie", "survival": "Survival", "multiplayer": "Multiplayer"}
+MODES = ("story", "online")
+LOCAL_ONLY = {"Shared/Split Screen", "Shared/Split Screen PvP", "Shared/Split Screen Co-op", "LAN PvP", "LAN Co-op"}
+LIST_SIZE = 60   # the site shows 20; the rest let a Story/Online filter still fill 20
+
+
+def _modes(categories: list[str] | None, tags: list[str] | None) -> list[str]:
+    """Story/online from Steam's official store categories; Steam player tags until those are cached."""
+    out = []
+    if categories is not None:
+        cats = set(categories)
+        if "Single-player" in cats:
+            out.append("story")
+        explicit = cats & {"Online PvP", "Online Co-op", "MMO", "Cross-Platform Multiplayer"}
+        # a bare "Multi-player" counts as online unless Steam only lists local/LAN ways to play together
+        if explicit or ("Multi-player" in cats and not cats & LOCAL_ONLY):
+            out.append("online")
+        return out
+    t = set(tags or [])
+    if t & {"Singleplayer", "Story Rich"}:
+        out.append("story")
+    if t & {"Online Co-Op", "PvP", "Massively Multiplayer", "Multiplayer", "MMORPG", "Battle Royale"}:
+        out.append("online")
+    return out
 MIN_REVIEWS = 500          # Bayesian weight
 PRIOR = 70.0
 DETAILS_PER_RUN = 900      # Steam store asks for <= ~200 requests / 5 minutes (1.5 s apart)
@@ -109,6 +133,7 @@ def _details(appid: str, cache: dict, budget: list[int]) -> dict | None:
             "platforms": [p for p, ok in (s.get("platforms") or {}).items() if ok],
             "image": s.get("header_image"),
             "genres": [g["description"] for g in s.get("genres") or []],
+            "categories": [c["description"] for c in s.get("categories") or []],
             "trailer": {"hls": movie.get("hls_h264"), "thumb": movie.get("thumbnail"), "name": movie.get("name")} if movie else None,
             "adult": str(s.get("required_age", "0")) in ("18",),
         }
@@ -319,7 +344,7 @@ def build(yt: YouTube | None = None) -> dict:
                     continue
                 out.append((weight_q * quality(r, d) + (1 - weight_q) * popularity(r), r, d))
             out.sort(key=lambda x: -x[0])
-            return out[:20]
+            return out[:LIST_SIZE]
 
         def trend_pop(r):
             mp = most_played.get(r["appid"])
@@ -365,7 +390,7 @@ def build(yt: YouTube | None = None) -> dict:
                 "user": {"score": r["user"], "reviews": r["reviews"], "source": "Steam reviews",
                          "confidence": _confidence(r["reviews"])},
                 "players_now": _players_now(r["appid"], players_now), "platforms": platforms,
-                "flags": [f for f, tag in FLAG_TAGS.items() if tag in ((state["tags"].get(r["appid"]) or {}).get("t") or [])],
+                "flags": _modes(d.get("categories"), (state["tags"].get(r["appid"]) or {}).get("t")),
                 "genres": d.get("genres"), "score": round(score, 4), "why": why,
                 "video": video or None, "trailer": d.get("trailer"),
                 "links": [{"name": "Steam", "url": f"https://store.steampowered.com/app/{r['appid']}/"}]
@@ -421,14 +446,14 @@ def build(yt: YouTube | None = None) -> dict:
                         extra.append(card(0, sc, r, d, why, rawg=g))
                         steam_ids.add(appid)
                         continue
-            merged = sorted(out[ranking] + extra, key=lambda c: -c["score"])[:20]
+            merged = sorted(out[ranking] + extra, key=lambda c: -c["score"])[:LIST_SIZE]
             for i, c in enumerate(merged):
                 c["rank"] = i + 1
             out[ranking] = merged
 
         # Trending covers Steam's activity charts; niche genres are topped up to 20 with this genre's
         # other Steam games, ranked by Steam's official live player count (70%) and reviews (30%)
-        if len(out["trending"]) < 20:
+        if len(out["trending"]) < LIST_SIZE:
             have = {c["id"] for c in out["trending"]}
             pool = {c["id"]: c for lst in (out["all_time"], out["recent"]) for c in lst if c["id"] not in have and c.get("user")}
             for c in pool.values():
@@ -437,7 +462,7 @@ def build(yt: YouTube | None = None) -> dict:
             live = [c for c in pool.values() if (c.get("players_now") or 0) >= 50]
             top_live = max((c["players_now"] for c in live), default=1)
             live.sort(key=lambda c: -(0.7 * common.log_scale(c["players_now"], top_live) + 0.3 * c["user"]["score"] / 100))
-            for c in live[: 20 - len(out["trending"])]:
+            for c in live[: LIST_SIZE - len(out["trending"])]:
                 out["trending"].append({**c, "why": f"{c['players_now']:,} people playing on Steam right now; "
                                                      f"{c['user']['score']:.0f}% positive from {c['user']['reviews']:,} reviews."})
             for i, c in enumerate(out["trending"]):
@@ -461,4 +486,4 @@ def build(yt: YouTube | None = None) -> dict:
     common.save_json(STATE, state)
     if not genres:
         raise RuntimeError("no game data fetched")
-    return {"genres": genres, "flags": list(FLAG_TAGS), "sources": (["RAWG"] if rawg_key else []) + ["Steam charts", "Steam store", "SteamSpy (per-game)"]}
+    return {"genres": genres, "flags": list(MODES), "sources": (["RAWG"] if rawg_key else []) + ["Steam charts", "Steam store", "SteamSpy (per-game)"]}
