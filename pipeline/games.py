@@ -8,11 +8,11 @@ on Steam (Nintendo, PlayStation exclusives) are left out, and critic scores aren
 
 Ranking (owner's weights):
   Owner's formulas (2 Nov 2026), Steam data only, counts log-scaled so giants don't win by size alone:
-  all-time   45% review quality + 35% review volume + 20% long-term popularity (Steam owners, SteamSpy)
+  all-time   33.3% review score + 33.3% players right now + 33.4% number of reviews (2 Nov 2026, replaces
+             45% quality + 35% review volume + 20% owners)
   recent     55% review quality + 30% review volume + 15% player retention (players now per owner)
              (released in the last 12 months)
-  trending   50% player growth over 7 days (half % change, half players gained) + 30% average players
-             over 7 days + 20% review quality.  (Before 2 Nov: 85/15, 75/25, 30/70.)
+  trending   50% players right now + 50% review score (2 Nov 2026, replaces 7-day growth/average formula).  (Before 2 Nov: 85/15, 75/25, 30/70.)
   Old notes: trending used Steam players yesterday, 2-week
              player activity, and growth between our daily snapshots)
   quality = the Steam user score.
@@ -385,17 +385,16 @@ def build(yt: YouTube | None = None) -> dict:
         max_avg = max((week_ccu(r["appid"])[0] for r in rows), default=1) or 1
 
         def score_all(r, d=None):
-            return 0.45 * quality(r) + 0.35 * pop_all(r) + 0.20 * longterm(r)
+            # owner, 2 Nov 2026: equal thirds -- review score, players right now, number of reviews (log-scaled)
+            return 0.333 * quality(r) + 0.333 * common.log_scale(r["ccu"], max_ccu) + 0.334 * pop_all(r)
 
         def score_recent_factory(pool):
             top = max((x["reviews"] for x in pool), default=1) or 1
             return lambda r, d=None: 0.55 * quality(r) + 0.30 * common.log_scale(r["reviews"], top) + 0.15 * retention(r)
 
         def score_trend(r, d=None):
-            avg, pct, gain = week_ccu(r["appid"])
-            # growth: half the % change (capped), half the real players gained, so tiny games can't win on % alone
-            growth = 0.5 * (max(0.0, pct) / 3) + 0.5 * common.log_scale(gain, max_gain)
-            return 0.50 * growth + 0.30 * common.log_scale(avg or r["ccu"], max_avg) + 0.20 * quality(r)
+            # owner, 2 Nov 2026: half players right now (log-scaled), half Steam review score
+            return 0.5 * common.log_scale(r["ccu"], max_ccu) + 0.5 * quality(r)
 
         # pre-rank on review data, then confirm with store details (dates, type)
         pre_all = sorted([r for r in rows if r["reviews"] >= 2000], key=score_all, reverse=True)[:90]
