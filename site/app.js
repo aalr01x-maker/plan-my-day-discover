@@ -486,7 +486,8 @@ function upcomingView(up, tabs, q) {
   chips([["", "All leagues"], ...up.leagues.map((l) => [l, l])], [league], (id) => {
     const n = new URLSearchParams(); if (id) n.set("league", id); go(["sports", "upcoming"], n, true);
   });
-  const list = up.events.filter((e) => !league || e.league === league);
+  // soonest first, in All leagues and in each league (owner, 2 Nov 2026)
+  const list = up.events.filter((e) => !league || e.league === league).slice().sort((a, b) => String(a.when).localeCompare(String(b.when)));
   heading("sports", ["Upcoming", league || "All leagues"]);
   const off = up.off_season.filter((l) => !league || l === league);
   note("Upcoming: the next big events of each major league, top 3 each. Team leagues: the most important games in the next 7 days "
