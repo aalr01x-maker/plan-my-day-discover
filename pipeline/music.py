@@ -881,7 +881,10 @@ def build(yt: YouTube | None = None) -> dict:
         lists = {
             "all_time": [card(x, i + 1, f"{x['yt']['views']:,} views on YouTube ({x['yt'].get('channel')}).")
                          for i, x in enumerate(all_time)],
-            "recent": _renumber([c for c in (card(x, 0, "") for x in recent) if (c["released"] or "") >= year_ago][:20]),
+            # owner, 2 Nov 2026: no padding with tiny songs -- a recent song needs at least 2% of the genre's
+            # top recent song's views (and 50K), so a short list beats a wrong one
+            "recent": _renumber([c for c in (card(x, 0, "") for x in recent) if (c["released"] or "") >= year_ago
+                                 and c["metrics"]["views"] >= max(50_000, 0.02 * max((y["yt"]["views"] for y in recent), default=0))][:20]),
             "trending": [card(x, i + 1, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.") for i, x in enumerate(trending)],
         }
         notes = {}
