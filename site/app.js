@@ -415,7 +415,7 @@ async function music(parts) {
   heading("music", [g?.name, label(RANKINGS, ranking)]);
   note(`${g?.name || ""}: ` + ({ all_time: "Best of All Time: total YouTube views of the official video.",
     recent: "Best Recent: released in the last 12 months; total YouTube views.",
-    trending: "Trending: YouTube views gained this week, or views per week for songs under 2 years old (70%), + total views (30%)." }[ranking]) +
+    trending: "Trending: ranked only by YouTube views gained per week (this week's measured gain, or views per week since posting for songs released in the last 2 years)." }[ranking]) +
     (g?.notes?.[ranking] ? " " + g.notes[ranking] : ""));
   paint(g?.[ranking] || [], songCard, songDetail, "No songs here yet.");
   return ["music", genre, ranking];

@@ -6,8 +6,8 @@ genre a song belongs to:
   Best of All Time   YouTube views of the song's official upload
   Best Recent        released in the last 12 months; YouTube views
   Trending (7 days)  YouTube views gained per week (between our daily counts), else
-                     views per week since the video went up (under 2 years old) 70%
-                     + total YouTube views 30%. Each card says which one ranked it.
+                     views per week since the video went up (under 2 years old) -- 100%
+                     (owner, 2 Nov 2026: total views removed). Each card says which one ranked it.
 
 A song counts for a genre only if MusicBrainz tags the recording, its release or
 its artist with one of the genre's tags (checked, not assumed from search).
@@ -865,7 +865,7 @@ def build(yt: YouTube | None = None) -> dict:
                 t_rows.append({**x, "mom": m})
         max_m = max((x["mom"][0] for x in t_rows), default=1)
         max_t = max((x["yt"]["views"] for x in t_rows), default=1)
-        trending = top(t_rows, lambda x: 0.7 * common.log_scale(x["mom"][0], max_m) + 0.3 * common.log_scale(x["yt"]["views"], max_t))
+        trending = top(t_rows, lambda x: x["mom"][0])   # views gained per week only (owner, 2 Nov 2026)
 
         def card(x: dict, rank: int, why: str) -> dict:
             apple = _itunes(x, state["itunes"], itunes_budget)
