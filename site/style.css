@@ -153,3 +153,12 @@ table.mini td, table.mini th { border-bottom: 1px solid var(--line); padding: 5p
 .vs-logos span { color: var(--muted, #8b95a7); font-weight: 600; }
 .vs-logos img, .vs-logos .vs-logo { width: 64px; height: 64px; object-fit: contain; border-radius: 0; background: none; }
 .vs-logos .wide { width: auto; max-width: 100%; height: 120px; border-radius: 10px; }
+
+/* Movies & TV: SeriesGraph link under the section picture (owner, 2 Nov 2026) */
+.section-link:empty { display: none; }
+.section-link { display: flex; justify-content: center; margin: 4px auto 18px; padding: 0 16px; }
+.section-link a { display: block; max-width: 560px; width: 100%; text-decoration: none; color: var(--accent); text-align: center;
+  border: 1px solid var(--line, #2a3140); border-radius: 14px; overflow: hidden; background: var(--surface); }
+.section-link img { display: block; width: 100%; height: auto; }
+.section-link span { display: block; padding: 10px 12px; font-weight: 600; }
+.section-link a:hover span { text-decoration: underline; }

@@ -145,6 +145,10 @@ function heading(section, crumbs) {
   $("pageSub").textContent = crumbs.filter(Boolean).join(" · ");
   // a picture pointing (or looking) up at the choices above the results
   $("pointer").innerHTML = SECTIONS.some((x) => x.id === section) ? `<img src="img/pointers/${section}.jpg" alt="" decoding="async">` : "";
+  // Movies & TV: SeriesGraph, episode-by-episode ratings for any show (owner, 2 Nov 2026)
+  $("sectionLink").innerHTML = section === "movies"
+    ? `<a href="https://seriesgraph.com/" target="_blank" rel="noopener"><img src="img/links/seriesgraph.jpg" alt="SeriesGraph episode ratings chart" loading="lazy" decoding="async">
+       <span>📊 SeriesGraph: see every episode's rating for any TV show</span></a>` : "";
   $("sectionSources").innerHTML = SOURCES[section] ? `<b>Sources:</b> ${esc(SOURCES[section])}` : "";
   $("sectionAbout").innerHTML = ABOUT[section] ? `<b>How this section is ranked:</b> ${esc(ABOUT[section])}` : "";
   document.title = [crumbs.filter(Boolean).join(" · "), s?.name, "Discover"].filter(Boolean).join(" – ");
