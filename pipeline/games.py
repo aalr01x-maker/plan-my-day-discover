@@ -1,4 +1,4 @@
-"""Gaming: 10 genre tabs x Best of All Time / Best Recent (12 months) / Trending (7 days), Top 20.
+"""Gaming: 11 genre tabs x Best of All Time / Best Recent (12 months) / Trending (7 days), Top 20.
 
 Steam only (owner, 31 Oct 2026): every game is ranked by its Steam player reviews; games not
 on Steam (Nintendo, PlayStation exclusives) are left out, and critic scores aren't used.
@@ -49,6 +49,7 @@ GENRES = {
     "rpg": ("RPG", ["RPG"], {"genres": "role-playing-games-rpg"}),
     "shooters": ("Shooters", ["Shooter", "FPS"], {"genres": "shooter"}),
     "open-world": ("Open World", ["Open World"], {"tags": "open-world"}),
+    "sandbox": ("Sandbox", ["Sandbox"], {"tags": "sandbox"}),   # owner, 1 Nov 2026
     "racing": ("Racing", ["Racing"], {"genres": "racing"}),
     "sports": ("Sports", ["Sports"], {"genres": "sports"}),
     "strategy": ("Strategy", ["Strategy"], {"genres": "strategy"}),
