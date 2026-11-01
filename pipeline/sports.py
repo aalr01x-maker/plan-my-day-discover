@@ -449,4 +449,10 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
         empty = [f"{lg}/{k}" for lg, b in by_league.items() for k in ("highlights", "results", "latest") if not b[k]]
         common.log(f"sports {sport_id}: {len(highlights)} highlights, {len(week)} events, {len(latest)} latest"
                    + (f"; still empty: {', '.join(empty)}" if empty else ""))
-    return {"sports": out}
+    try:   # owner, 1 Nov 2026: a tab before Soccer with the next big events of each major league
+        from . import upcoming
+        up = upcoming.build(now)
+    except Exception as exc:   # never lose the rest of Sports over it
+        common.log(f"sports upcoming failed: {exc}")
+        up = None
+    return {"sports": out, "upcoming": up}

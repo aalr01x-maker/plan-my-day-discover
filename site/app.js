@@ -445,7 +445,9 @@ function songDetail(s) {
 /* ---------- Sports ---------- */
 async function sports(parts, q) {
   const data = await load("sports");
-  const tabs = Object.entries(data.sports).map(([id, s]) => [id, `${s.icon} ${s.name}`]);
+  const up = data.upcoming;
+  const tabs = [...(up ? [["upcoming", `${up.icon} ${up.name}`]] : []), ...Object.entries(data.sports).map(([id, s]) => [id, `${s.icon} ${s.name}`])];
+  if (up && (parts[1] === "upcoming" || !parts[1])) return upcomingView(up, tabs, q);
   const sport = data.sports[parts[1]] ? parts[1] : tabs[0]?.[0];
   const s = data.sports[sport];
   let view = SPORT_VIEWS.some(([v]) => v === parts[2]) ? parts[2] : (s.highlights.length ? "highlights" : "results");
@@ -470,6 +472,36 @@ async function sports(parts, q) {
       : `No ${league} ${view === "highlights" ? "highlight videos" : "results or events"} in the last 7 days — usually because no ${league} matches were played this week.`)
       : "Nothing in this view right now.");
   return ["sports", sport, view];
+}
+// Upcoming (owner, 1 Nov 2026): the next big events of each major league, top 3 each, league named on every card
+function upcomingView(up, tabs, q) {
+  const league = q.get("league") || "";
+  tabsRow($("tabs"), tabs, "upcoming", (id) => go(["sports", id], null));
+  $("subtabs").innerHTML = "";
+  chips([["", "All leagues"], ...up.leagues.map((l) => [l, l])], [league], (id) => {
+    const n = new URLSearchParams(); if (id) n.set("league", id); go(["sports", "upcoming"], n, true);
+  });
+  const list = up.events.filter((e) => !league || e.league === league);
+  heading("sports", ["Upcoming", league || "All leagues"]);
+  const off = up.off_season.filter((l) => !league || l === league);
+  note("Upcoming: the next big events of each major league, top 3 each. Team leagues: the most important games in the next 7 days "
+    + "(both teams' records this season, plus national TV in US leagues). F1, NASCAR, UFC, boxing, snooker and pool: the next 3 events. "
+    + "Times are shown in your time zone." + (off.length ? ` Nothing scheduled yet (off-season or not announced): ${off.join(", ")}.` : ""));
+  paint(list, upcomingCard, upcomingDetail, league ? `No ${league} events announced yet (off-season).` : "No upcoming events yet.");
+  return ["sports", "upcoming"];
+}
+function upcomingCard(e) {
+  const logos = e.image2 && e.image2 !== e.image
+    ? `<div class="vs-logos">${img(e.image2, "vs-logo", "")}<span>vs</span>${img(e.image, "vs-logo", "")}</div>`
+    : e.image ? `<div class="vs-logos">${img(e.image, "vs-logo wide", "")}</div>` : "";
+  return `<article class="card" tabindex="0" data-item="${esc(e.id)}">${logos}
+    <div class="body"><div class="badges"><span class="badge">${esc(e.icon)} ${esc(e.league)}</span></div>
+    <h3 class="title">${esc(e.title)}</h3><div class="meta">${e.date_only ? kuwait(e.when, false) + " (time not announced)" : `${kuwait(e.when)} (${tzLabel()})`}${e.venue ? " · " + esc(e.venue) : ""}</div>${why(e.why)}</div></article>`;
+}
+function upcomingDetail(e) {
+  return `<div class="detail"><h2 id="sheetTitle">${esc(e.title)}</h2><div class="meta">${esc(e.icon)} ${esc(e.league)} · ${e.date_only ? kuwait(e.when, false) + " (time not announced)" : `${kuwait(e.when)} (${tzLabel()})`}</div>
+    ${e.venue ? `<p>Venue: ${esc(e.venue)}</p>` : ""}<h3>Why it's here</h3><p>${esc(e.why)}</p>
+    ${e.url ? `<p><a href="${esc(e.url)}" target="_blank" rel="noopener">Details on ${esc(e.source)}</a></p>` : ""}</div>`;
 }
 function highlightCard(v) {
   return `<article class="card" tabindex="0" data-item="${esc(v.youtube_id)}">${img(`https://i.ytimg.com/vi/${v.youtube_id}/hqdefault.jpg`, "thumb", "")}
