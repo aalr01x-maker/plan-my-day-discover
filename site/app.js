@@ -127,7 +127,7 @@ function note(text, label = "Ranked by") {
 const ABOUT = {
   news: "Stories are grouped across BBC, Reuters, AP, Al Jazeera, DW, France 24 and CNBC, then ranked by how many independent outlets confirm them (35%), significance (30%), recency (20%) and source reliability (15%). Duplicates are merged into one story.",
   movies: "Everything comes from IMDb: which titles exist, their genres, ratings and votes. Every list shows only titles rated 7.5+ out of 10, and ratings are weighted by number of votes, so a title with a few votes can't top the list.",
-  gaming: "Ranked only by Steam player reviews (weighted by how many people reviewed) plus popularity on Steam. Every review and player count is Steam's own; games not sold on Steam (Nintendo and PlayStation exclusives) aren't listed.",
+  gaming: "Ranked only with Steam data: review score, number of reviews, owners and live players (counts on a log scale, so the biggest games don't win by size alone). Every review and player count is Steam's own; games not sold on Steam (Nintendo and PlayStation exclusives) aren't listed.",
   music: "Ranked only by YouTube: views of each song's official upload (artist channel, VEVO or Topic). Last.fm, Deezer charts and MusicBrainz only decide which genre a song belongs to, never its rank.",
   sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
 };
@@ -374,9 +374,9 @@ async function gaming(parts, q) {
   const list = (g?.[ranking] || []).filter((x) => flags.every((f) => x.flags.includes(f))).slice(0, 20)
     .map((x, i) => (flags.length ? { ...x, rank: i + 1 } : x));
   heading("gaming", [g?.name, label(RANKINGS, ranking), ...flags.map((f) => label(MODES, f))]);
-  note([`${g?.name || ""} games:`, { all_time: "Best of All Time: 85% Steam player reviews (weighted by review count) + 15% popularity.",
-    recent: "Best Recent: released in the last 12 months; 75% Steam player reviews + 25% popularity.",
-    trending: "Trending: Steam players right now and this week's change; 70% popularity + 30% Steam player reviews." }[ranking], g?.notes?.stale, g?.notes?.[ranking], g?.notes?.platforms].filter(Boolean).join(" "));
+  note([`${g?.name || ""} games:`, { all_time: "Best of All Time: 45% Steam review score (weighted so a few reviews can't top it) + 35% number of reviews + 20% long-term popularity (Steam owners).",
+    recent: "Best Recent: released in the last 12 months; 55% Steam review score + 30% number of reviews + 15% player retention (owners still playing).",
+    trending: "Trending: 50% player growth this week (percentage and players gained) + 30% average players this week + 20% Steam review score." }[ranking], g?.notes?.stale, g?.notes?.[ranking], g?.notes?.platforms].filter(Boolean).join(" "));
   paint(list, gameCard, gameDetail, flags.length ? "No games match these filters in this list." : "No games here yet.");
   return ["gaming", genre, ranking];
 }

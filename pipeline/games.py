@@ -7,9 +7,13 @@ on Steam (Nintendo, PlayStation exclusives) are left out, and critic scores aren
   confidence  high / medium / low from the number of reviews behind the user score
 
 Ranking (owner's weights):
-  all-time   85% quality + 15% popularity
-  recent     75% quality + 25% popularity   (released in the last 12 months)
-  trending   30% quality + 70% popularity now (Steam players yesterday, 2-week
+  Owner's formulas (2 Nov 2026), Steam data only, counts log-scaled so giants don't win by size alone:
+  all-time   45% review quality + 35% review volume + 20% long-term popularity (Steam owners, SteamSpy)
+  recent     55% review quality + 30% review volume + 15% player retention (players now per owner)
+             (released in the last 12 months)
+  trending   50% player growth over 7 days (half % change, half players gained) + 30% average players
+             over 7 days + 20% review quality.  (Before 2 Nov: 85/15, 75/25, 30/70.)
+  Old notes: trending used Steam players yesterday, 2-week
              player activity, and growth between our daily snapshots)
   quality = the Steam user score.
 
@@ -323,12 +327,52 @@ def build(yt: YouTube | None = None) -> dict:
                 return None
             return d
 
-        def quality(r, d):
-            return r["user"] / 100   # Steam player reviews only
+        def quality(r, d=None):
+            return r["user"] / 100   # Steam player reviews only (Bayesian-weighted)
+
+        def owners_mid(r) -> float:   # SteamSpy owners "1,000,000 .. 2,000,000" -> 1,500,000
+            nums = [int(x.replace(",", "")) for x in re.findall(r"[\d,]+", str(r.get("owners") or "")) if x.replace(",", "")]
+            return sum(nums[:2]) / len(nums[:2]) if nums else 0.0
+
+        max_owners = max((owners_mid(r) for r in rows), default=1) or 1
+
+        def longterm(r):   # lasting popularity: how many people own it on Steam
+            return common.log_scale(owners_mid(r), max_owners)
+
+        def retention(r):  # share of owners still playing: live players per owner
+            o = owners_mid(r)
+            return min(1.0, (r["ccu"] / o) * 200) if o else 0.0   # 0.5% of owners online at once = full marks
+
+        def week_ccu(appid: str) -> tuple[float, float, float]:
+            """(average players over 7 days, % change, players gained) from our daily snapshots."""
+            h = ccu_hist.get(appid) or {}
+            week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+            days = sorted(d for d in h if d >= week_ago)
+            if not days:
+                return 0.0, 0.0, 0.0
+            avg = sum(h[d] for d in days) / len(days)
+            first, last = h[days[0]], h[days[-1]]
+            pct = max(-1.0, min(3.0, (last - first) / first)) if len(days) >= 2 and first else 0.0
+            return avg, pct, max(0.0, last - first)
+
+        max_gain = max((week_ccu(r["appid"])[2] for r in rows), default=1) or 1
+        max_avg = max((week_ccu(r["appid"])[0] for r in rows), default=1) or 1
+
+        def score_all(r, d=None):
+            return 0.45 * quality(r) + 0.35 * pop_all(r) + 0.20 * longterm(r)
+
+        def score_recent_factory(pool):
+            top = max((x["reviews"] for x in pool), default=1) or 1
+            return lambda r, d=None: 0.55 * quality(r) + 0.30 * common.log_scale(r["reviews"], top) + 0.15 * retention(r)
+
+        def score_trend(r, d=None):
+            avg, pct, gain = week_ccu(r["appid"])
+            # growth: half the % change (capped), half the real players gained, so tiny games can't win on % alone
+            growth = 0.5 * (max(0.0, pct) / 3) + 0.5 * common.log_scale(gain, max_gain)
+            return 0.50 * growth + 0.30 * common.log_scale(avg or r["ccu"], max_avg) + 0.20 * quality(r)
 
         # pre-rank on review data, then confirm with store details (dates, type)
-        pre_all = sorted([r for r in rows if r["reviews"] >= 2000], key=lambda r: 0.85 * r["user"] / 100 + 0.15 * pop_all(r),
-                         reverse=True)[:70]
+        pre_all = sorted([r for r in rows if r["reviews"] >= 2000], key=score_all, reverse=True)[:90]
         # Recent: store pages created in the last few years (higher app ids), most-reviewed first;
         # release dates are then checked against the store.
         charts = set(most_played) | set(two_weeks)
@@ -337,29 +381,24 @@ def build(yt: YouTube | None = None) -> dict:
         pre_trend = sorted(rows, key=lambda r: -(r["ccu"] + (20000 if r["appid"] in most_played else 0)
                                                  + (5000 if r["appid"] in two_weeks else 0)))[:150]
 
-        def ranked(pre, weight_q, extra_filter=None, popularity=pop_all, depth=TOP_TAGS):
+        score_recent = score_recent_factory(pre_recent)
+
+        def ranked(pre, scorer, extra_filter=None, depth=TOP_TAGS):
             out = []
             for r in pre:
                 d = detail(r, depth)
                 if d is None or (extra_filter and not extra_filter(d)):
                     continue
-                out.append((weight_q * quality(r, d) + (1 - weight_q) * popularity(r), r, d))
+                out.append((scorer(r, d), r, d))
             out.sort(key=lambda x: -x[0])
             return out[:LIST_SIZE]
 
-        def trend_pop(r):
-            mp = most_played.get(r["appid"])
-            climbing = 1.0 if mp and mp.get("last_week_rank") and mp["rank"] < mp["last_week_rank"] else 0.0
-            return (0.5 * common.log_scale(r["ccu"], max_ccu) + 0.15 * (1 if r["appid"] in two_weeks else 0)
-                    + 0.15 * climbing + 0.2 * max(0.0, ccu_growth(r["appid"])) / 3)
-
         lists = {
-            "all_time": ranked(pre_all, 0.85),
-            "recent": ranked(pre_recent, 0.75, lambda d: (d.get("released") or "") >= year_ago and not d.get("coming_soon"),
-                             popularity=lambda r: common.log_scale(r["reviews"], max(x["reviews"] for x in pre_recent) or 1)),
+            "all_time": ranked(pre_all, score_all),
+            "recent": ranked(pre_recent, score_recent, lambda d: (d.get("released") or "") >= year_ago and not d.get("coming_soon")),
             # Trending only covers the ~130 games on Steam's activity charts, so a genre tag anywhere
             # in a game's top 12 counts (top 7 elsewhere)
-            "trending": ranked(pre_trend, 0.30, popularity=trend_pop, depth=12),
+            "trending": ranked(pre_trend, score_trend, depth=12),
         }
 
         rawg_by_name, rawg_lists = {}, {"all_time": [], "recent": []}
@@ -422,7 +461,7 @@ def build(yt: YouTube | None = None) -> dict:
         # Steam are left out (Steam only).
         steam_ids = {c["id"] for lst in out.values() for c in lst}
         steam_names = {common.norm(c["title"]).strip() for lst in out.values() for c in lst}
-        for ranking, weight_q in (("all_time", 0.85), ("recent", 0.75)):
+        for ranking, scorer in (("all_time", score_all), ("recent", score_recent)):
             extra, seen = [], set()
             for g in rawg_lists[ranking]:
                 key = common.norm(g["name"]).strip()
@@ -442,7 +481,7 @@ def build(yt: YouTube | None = None) -> dict:
                             continue
                         r = {"appid": appid, "name": a.get("name") or g["name"], "developer": a.get("developer"),
                              "user": user, "reviews": n, "ccu": int(a.get("ccu") or 0), "owners": a.get("owners")}
-                        sc = weight_q * quality(r, d) + (1 - weight_q) * common.log_scale(n, max_reviews)
+                        sc = scorer(r, d)
                         why = (f"Released {d.get('released') or g.get('released')}; " if ranking == "recent" else "") + why_all(r, d)
                         extra.append(card(0, sc, r, d, why, rawg=g))
                         steam_ids.add(appid)
