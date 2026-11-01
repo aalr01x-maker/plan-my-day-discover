@@ -549,6 +549,25 @@ def _itunes(song: dict, cache: dict, budget: list[int]) -> dict | None:
     return hit
 
 
+def _earliest(*dates: str | None) -> str | None:
+    """The earliest full date (YYYY-MM-DD) among the sources, else the first partial one: a reissue or
+    live album must never make an old song look new."""
+    full = sorted(d for d in dates if d and len(d) == 10)
+    return full[0] if full else next((d for d in dates if d), None)
+
+
+def _posted_since(video: dict, cut) -> bool:
+    up = common.parse_time(video.get("published"))
+    return bool(up and up >= cut)
+
+
+def _renumber(cards: list[dict]) -> list[dict]:
+    for i, c in enumerate(cards):
+        c["rank"] = i + 1
+        c["why"] = f"Released {c['released']}; {c['metrics']['views']:,} views on YouTube."
+    return cards
+
+
 def _links(song: dict, apple: dict | None) -> list[dict]:
     q = quote_plus(f"{song['artist']} {song['title']}")
     links = []
@@ -615,6 +634,7 @@ def build(yt: YouTube | None = None) -> dict:
                 del state["yt"][k]
         state["yt_rechecked"] = True
     year_ago = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+    video_cut = now - timedelta(days=395)
     two_years = (now - timedelta(days=730)).strftime("%Y-%m-%d")
 
     def skey(s):
@@ -749,12 +769,15 @@ def build(yt: YouTube | None = None) -> dict:
                     break
             return out
 
-        a_rows, r_rows = with_yt(at), with_yt(rc)
+        # Best Recent: the release date alone isn't enough -- MusicBrainz/Deezer often date a live album,
+        # reissue or compilation ("Mercy" via "Ye Live in Mexico" 2026), while the YouTube video and its
+        # views are the 2012 original. A recent song's official video must also be under ~13 months old.
+        a_rows, r_rows = with_yt(at), [x for x in with_yt(rc) if _posted_since(x["yt"], video_cut)]
         max_a = max((x["yt"]["views"] for x in a_rows), default=1)
         max_r = max((x["yt"]["views"] for x in r_rows), default=1)
         # ranked by YouTube alone; genre tags only decide membership
         all_time = top(a_rows, lambda x: x["yt"]["views"])
-        recent = top(r_rows, lambda x: x["yt"]["views"])
+        recent = top(r_rows, lambda x: x["yt"]["views"], 40)   # trimmed to 20 after the Apple date check below
 
         # Trending: views gained per week (between our daily counts), else views per week since the
         # video went up when it is under 2 years old
@@ -782,7 +805,7 @@ def build(yt: YouTube | None = None) -> dict:
             v = x["yt"]
             return {
                 "id": x["mbid"], "rank": rank, "title": x["title"], "artist": x["artist"], "album": x.get("album"),
-                "released": (apple or {}).get("released") or x.get("released"),
+                "released": _earliest(x.get("released"), (apple or {}).get("released")),
                 "artwork": (apple or {}).get("artwork") or x.get("cover"),
                 "preview": (apple or {}).get("preview"),
                 "metrics": {"views": v["views"], "source": "YouTube", "channel": v.get("channel"), "genre_fit": round(x["fit"], 2)},
@@ -793,7 +816,7 @@ def build(yt: YouTube | None = None) -> dict:
         lists = {
             "all_time": [card(x, i + 1, f"{x['yt']['views']:,} views on YouTube ({x['yt'].get('channel')}).")
                          for i, x in enumerate(all_time)],
-            "recent": [card(x, i + 1, f"Released {x['released']}; {x['yt']['views']:,} views on YouTube.") for i, x in enumerate(recent)],
+            "recent": _renumber([c for c in (card(x, 0, "") for x in recent) if (c["released"] or "") >= year_ago][:20]),
             "trending": [card(x, i + 1, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.") for i, x in enumerate(trending)],
         }
         notes = {}
