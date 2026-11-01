@@ -22,7 +22,7 @@ with last week's rank; 2-week top 100) for Trending, Steam store (release dates,
 trailers, store links) and SteamSpy per-game data (Steam review counts,
 player tags, cached 30 days). SteamSpy's genre lists are no longer used: that
 endpoint stopped answering on 31 Oct 2026.
-Story / Online are filter modes, not tabs (owner, 1 Nov 2026): Story = has a single-player/story mode,
+Story / Online modes are still computed (flags) but the site no longer offers them as filters (owner, 2 Nov 2026: inaccurate). Originally (owner, 1 Nov 2026): Story = has a single-player/story mode,
 Online = has online multiplayer; a game with both shows under each, a story-only game never under Online.
 Each list ships up to LIST_SIZE games so a filtered view still gets its own full top 20.
 

@@ -365,27 +365,19 @@ async function gaming(parts, q) {
   const tabs = Object.entries(data.genres).map(([id, g]) => [id, g.name]);
   const genre = data.genres[parts[1]] ? parts[1] : tabs[0]?.[0];
   const ranking = RANKINGS.some(([r]) => r === parts[2]) ? parts[2] : "all_time";
-  const flags = (q.get("f") || "").split(",").filter((f) => MODES.some(([m]) => m === f));   // old links (indie, ...) ignored
-  tabsRow($("tabs"), tabs, genre, (id) => go(["gaming", id, ranking], flagQ(flags)));
-  segGroups([{ label: "Ranking", items: RANKINGS, selected: ranking, onPick: (id) => go(["gaming", genre, id], flagQ(flags)) }]);
-  // Story = has a story/single-player mode; Online = has online multiplayer. Both picked = games with both.
-  chips(MODES, flags, (id) => {
-    const next = flags.includes(id) ? flags.filter((f) => f !== id) : [...flags, id];
-    go(["gaming", genre, ranking], flagQ(next), true);
-  });
+  // Story mode / Online filters removed (owner, 2 Nov 2026: Steam's mode data too inaccurate)
+  tabsRow($("tabs"), tabs, genre, (id) => go(["gaming", id, ranking], null));
+  segGroups([{ label: "Ranking", items: RANKINGS, selected: ranking, onPick: (id) => go(["gaming", genre, id], null) }]);
+  $("filters").innerHTML = "";
   const g = data.genres[genre];
-  // each list ships extra games, so a filtered view still gets its own top 20, numbered from 1
-  const list = (g?.[ranking] || []).filter((x) => flags.every((f) => x.flags.includes(f))).slice(0, 20)
-    .map((x, i) => (flags.length ? { ...x, rank: i + 1 } : x));
-  heading("gaming", [g?.name, label(RANKINGS, ranking), ...flags.map((f) => label(MODES, f))]);
+  const list = (g?.[ranking] || []).slice(0, 20);
+  heading("gaming", [g?.name, label(RANKINGS, ranking)]);
   note([`${g?.name || ""} games:`, { all_time: "Best of All Time: 45% Steam review score (weighted so a few reviews can't top it) + 35% number of reviews + 20% long-term popularity (Steam owners).",
     recent: "Best Recent: released in the last 12 months; 55% Steam review score + 30% number of reviews + 15% player retention (owners still playing).",
     trending: "Trending: 50% player growth this week (percentage and players gained) + 30% average players this week + 20% Steam review score." }[ranking], g?.notes?.stale, g?.notes?.[ranking], g?.notes?.platforms].filter(Boolean).join(" "));
-  paint(list, gameCard, gameDetail, flags.length ? "No games match these filters in this list." : "No games here yet.");
+  paint(list, gameCard, gameDetail, "No games here yet.");
   return ["gaming", genre, ranking];
 }
-const MODES = [["story", "Story mode"], ["online", "Online"]];
-const flagQ = (flags) => { const q = new URLSearchParams(); if (flags.length) q.set("f", flags.join(",")); return q; };
 function scoreBadges(x) {
   const u = x.user;
   return `<div class="scores">${u && u.score != null ? `<span class="score">Steam reviews <b>${Math.round(u.score)}%</b> · ${num(u.reviews)}</span>` : ""}
@@ -398,7 +390,7 @@ function gameCard(x) {
     <div class="body"><h3 class="title"><span class="rank">#${x.rank}</span>${esc(x.title)}</h3>
     <div class="meta">${x.released ? kuwait(x.released, false) : ""} · ${esc(x.platforms.join(", "))}</div>
     ${scoreBadges(x)}
-    <div class="badges">${x.flags.filter((f) => MODES.some(([m]) => m === f)).map((f) => `<span class="badge">${esc(label(MODES, f))}</span>`).join("")}</div>${why(x.why)}</div></article>`;
+    ${why(x.why)}</div></article>`;
 }
 function gameDetail(x) {
   return `<div class="detail"><h2 id="sheetTitle">${esc(x.title)}</h2>
