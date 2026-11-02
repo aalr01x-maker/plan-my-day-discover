@@ -10,7 +10,7 @@ Ranking (owner's weights):
   Owner's formulas (2 Nov 2026), Steam data only, counts log-scaled so giants don't win by size alone:
   all-time   33.3% review score + 33.3% players right now + 33.4% number of reviews (2 Nov 2026, replaces
              45% quality + 35% review volume + 20% owners)
-  recent     55% review quality + 30% review volume + 15% player retention (players now per owner)
+  recent     65% review score + 35% number of reviews (2 Nov 2026; retention dropped)
              (released in the last 12 months)
   trending   50% players right now + 50% review score (2 Nov 2026, replaces 7-day growth/average formula).  (Before 2 Nov: 85/15, 75/25, 30/70.)
   Old notes: trending used Steam players yesterday, 2-week
@@ -518,7 +518,8 @@ def build(yt: YouTube | None = None) -> dict:
 
         def score_recent_factory(pool):
             top = max((x["reviews"] for x in pool), default=1) or 1
-            return lambda r, d=None: 0.55 * quality(r) + 0.30 * common.log_scale(r["reviews"], top) + 0.15 * retention(r)
+            # owner, 2 Nov 2026: retention dropped (the players-per-review stand-in rewarded tiny games)
+            return lambda r, d=None: 0.65 * quality(r) + 0.35 * common.log_scale(r["reviews"], top)
 
         def score_trend(r, d=None):
             # owner, 2 Nov 2026: half players right now (log-scaled), half Steam review score
@@ -632,13 +633,16 @@ def build(yt: YouTube | None = None) -> dict:
                          + ([{"name": "RAWG", "url": f"https://rawg.io/games/{rawg['slug']}"}] if rawg else []),
             }
 
+        def why_recent(r):   # exactly what Best Recent ranks by
+            return f"{r['user']:.0f}% positive Steam reviews (weighted) from {r['reviews']:,} reviews."
+
         def why_all(r, d):
             return (f"{r['user']:.0f}% positive Steam reviews (weighted) from {r['reviews']:,} reviews; "
                     f"{r['ccu']:,} playing on Steam right now.")
 
         out = {
             "all_time": [card(i + 1, s, r, d, why_all(r, d)) for i, (s, r, d) in enumerate(lists["all_time"])],
-            "recent": [card(i + 1, s, r, d, f"Released {d['released']}; " + why_all(r, d)) for i, (s, r, d) in enumerate(lists["recent"])],
+            "recent": [card(i + 1, s, r, d, f"Released {d['released']}; " + why_recent(r)) for i, (s, r, d) in enumerate(lists["recent"])],
             "trending": [card(i + 1, s, r, d, "")   # why-text set below with the final Trending ranking
                          for i, (s, r, d) in enumerate(lists["trending"])],
         }
@@ -682,7 +686,7 @@ def build(yt: YouTube | None = None) -> dict:
                         if r["user"] is None:
                             continue
                         sc = scorer(r, d)
-                        why = (f"Released {d.get('released') or g.get('released')}; " if ranking == "recent" else "") + why_all(r, d)
+                        why = (f"Released {d.get('released') or g.get('released')}; " + why_recent(r)) if ranking == "recent" else why_all(r, d)
                         extra.append(card(0, sc, r, d, why, rawg=g))
                         steam_ids.add(appid)
                         continue
