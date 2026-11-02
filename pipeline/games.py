@@ -174,12 +174,14 @@ def _steam_reviews(appid: str) -> tuple[int, int] | None:
 
 def _steam_reviews_many(appids: list[str], cache: dict) -> None:
     """Steam's own review totals for many games at once (IStoreBrowseService, 50 per request), into
-    cache[appid] = (percent positive, review count). Owner, 2 Nov 2026: every number from Steam itself."""
+    cache[appid] = (percent positive, review count, still sold). Owner, 2 Nov 2026: every number from
+    Steam itself; games no longer sold on Steam (FIFA 22, delisted) aren't recommended."""
     todo = [a for a in dict.fromkeys(appids) if a not in cache]
     for i in range(0, len(todo), 50):
         batch = todo[i:i + 50]
         payload = json.dumps({"ids": [{"appid": int(a)} for a in batch], "context": {"language": "english", "country_code": "US"},
-                              "data_request": {"include_reviews": True}})
+                              "data_request": {"include_reviews": True, "include_basic_info": True,
+                                               "include_purchase_options": True}})
         try:
             data = common.get("https://api.steampowered.com/IStoreBrowseService/GetItems/v1/", params={"input_json": payload})
         except (common.FetchError, ValueError) as exc:
@@ -188,7 +190,8 @@ def _steam_reviews_many(appids: list[str], cache: dict) -> None:
         for it in (data.get("response") or {}).get("store_items") or []:
             summ = ((it.get("reviews") or {}).get("summary_filtered") or {})
             if it.get("appid") and summ.get("review_count"):
-                cache[str(it["appid"])] = (int(summ.get("percent_positive") or 0), int(summ["review_count"]))
+                sold = bool(it.get("is_free") or it.get("best_purchase_option") or it.get("purchase_options"))
+                cache[str(it["appid"])] = (int(summ.get("percent_positive") or 0), int(summ["review_count"]), sold)
         time.sleep(0.3)
 
 
@@ -456,9 +459,11 @@ def build(yt: YouTube | None = None) -> dict:
         _steam_reviews_many(list(cands), steam_totals)
         for r in cands.values():
             if r["appid"] in steam_totals:
-                pct, n = steam_totals[r["appid"]]
+                pct, n, sold = steam_totals[r["appid"]]
                 pos = round(n * pct / 100)
                 r["user"], r["reviews"] = _user_score(pos, n - pos)
+                if not sold:
+                    r["user"] = None   # no longer sold on Steam: dropped from every list below
             live = _players_now(r["appid"], players_now)
             r["ccu"] = int(live or 0)
         for lst in (pre_all, pre_recent, pre_trend):
@@ -584,9 +589,11 @@ def build(yt: YouTube | None = None) -> dict:
                              "user": user, "reviews": n, "ccu": int(a.get("ccu") or 0), "owners": a.get("owners")}
                         _steam_reviews_many([appid], steam_totals)   # Steam's own numbers (owner, 2 Nov 2026)
                         if appid in steam_totals:
-                            pct, tot = steam_totals[appid]
+                            pct, tot, sold = steam_totals[appid]
                             pos = round(tot * pct / 100)
                             r["user"], r["reviews"] = _user_score(pos, tot - pos)
+                            if not sold:
+                                continue
                         r["ccu"] = int(_players_now(appid, players_now) or 0)
                         if r["user"] is None:
                             continue
