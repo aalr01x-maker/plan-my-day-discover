@@ -10,7 +10,7 @@ Ranking (owner's weights):
   Owner's formulas (2 Nov 2026), Steam data only, counts log-scaled so giants don't win by size alone:
   all-time   33.3% review score + 33.3% players right now + 33.4% number of reviews (2 Nov 2026, replaces
              45% quality + 35% review volume + 20% owners)
-  recent     65% review score + 35% number of reviews (2 Nov 2026; retention dropped)
+  recent     released in the last 5 years; same thirds as all-time (2 Nov 2026)
              (released in the last 12 months)
   trending   50% players right now + 50% review score (2 Nov 2026, replaces 7-day growth/average formula).  (Before 2 Nov: 85/15, 75/25, 30/70.)
   Old notes: trending used Steam players yesterday, 2-week
@@ -400,6 +400,8 @@ def build(yt: YouTube | None = None) -> dict:
     now = common.now_utc()
     today = now.strftime("%Y-%m-%d")
     year_ago = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+    # owner, 2 Nov 2026: Best Recent = released in the last 5 years
+    recent_cut = (now - timedelta(days=5 * 365 + 1)).strftime("%Y-%m-%d")
     state = common.load_json(STATE, {"details": {}, "ccu": {}, "videos": {}})
     state.setdefault("tags", {})
     state.setdefault("rawg_stores", {})
@@ -517,9 +519,8 @@ def build(yt: YouTube | None = None) -> dict:
             return 0.333 * quality(r) + 0.333 * common.log_scale(r["ccu"], max_ccu) + 0.334 * pop_all(r)
 
         def score_recent_factory(pool):
-            top = max((x["reviews"] for x in pool), default=1) or 1
-            # owner, 2 Nov 2026: retention dropped (the players-per-review stand-in rewarded tiny games)
-            return lambda r, d=None: 0.65 * quality(r) + 0.35 * common.log_scale(r["reviews"], top)
+            # owner, 2 Nov 2026: one third review score, one third number of reviews, one third players now
+            return score_all
 
         def score_trend(r, d=None):
             # owner, 2 Nov 2026: half players right now (log-scaled), half Steam review score
@@ -530,8 +531,9 @@ def build(yt: YouTube | None = None) -> dict:
         # Recent: store pages created in the last few years (higher app ids), most-reviewed first;
         # release dates are then checked against the store.
         charts = set(most_played) | set(two_weeks)
-        pre_recent = sorted([r for r in rows if r["reviews"] >= 50 and (int(r["appid"]) >= 2_500_000 or r["appid"] in charts)],
-                            key=lambda r: -r["reviews"])[:200]
+        pre_recent = sorted([r for r in rows if r["reviews"] >= 50 and (int(r["appid"]) >= 1_100_000 or r["appid"] in charts
+                                                                    or r["appid"] in set(sellers))],
+                            key=lambda r: -r["reviews"])[:300]
         pre_trend = sorted(rows, key=lambda r: -(r["ccu"] + (20000 if r["appid"] in most_played else 0)
                                                  + (5000 if r["appid"] in two_weeks else 0)))[:150]
         # Steam's current top sellers always get considered (SteamSpy hasn't caught up with brand-new games)
@@ -568,11 +570,11 @@ def build(yt: YouTube | None = None) -> dict:
             if rel:
                 orig = rel.get("original_steam_release_date")
                 if orig:
-                    return orig < year_ago
+                    return orig < recent_cut
                 if rel.get("release_from_early_access_date"):
                     return True
             first = _first_release(rawg_key, d.get("name") or "", rawg_dates, rawg_budget)
-            return bool(first and first < year_ago and first < (d.get("released") or "9999"))
+            return bool(first and first < recent_cut and first < (d.get("released") or "9999"))
 
         def ranked(pre, scorer, extra_filter=None, depth=TOP_TAGS):
             out = []
@@ -586,7 +588,7 @@ def build(yt: YouTube | None = None) -> dict:
 
         lists = {
             "all_time": ranked(pre_all, score_all),
-            "recent": ranked(pre_recent, score_recent, lambda d, appid: (d.get("released") or "") >= year_ago and not d.get("coming_soon")
+            "recent": ranked(pre_recent, score_recent, lambda d, appid: (d.get("released") or "") >= recent_cut and not d.get("coming_soon")
                              and not _was_out_before(d, appid)),
             # Trending only covers the ~130 games on Steam's activity charts, so a genre tag anywhere
             # in a game's top 12 counts (top 7 elsewhere)
@@ -597,7 +599,7 @@ def build(yt: YouTube | None = None) -> dict:
         if rawg_key:
             # RAWG only finds candidates (most-played first); Steam reviews decide the ranking
             for ranking, params, pages in (("all_time", {"ordering": "-added"}, 2),
-                                           ("recent", {"dates": f"{year_ago},{today}", "ordering": "-added"}, 5)):
+                                           ("recent", {"dates": f"{recent_cut},{today}", "ordering": "-added"}, 5)):
                 for g in _rawg(rawg_key, params, rawg_filter, pages=pages):
                     rawg_by_name[common.norm(g["name"]).strip()] = g
                     rawg_lists[ranking].append(g)
@@ -642,7 +644,7 @@ def build(yt: YouTube | None = None) -> dict:
 
         out = {
             "all_time": [card(i + 1, s, r, d, why_all(r, d)) for i, (s, r, d) in enumerate(lists["all_time"])],
-            "recent": [card(i + 1, s, r, d, f"Released {d['released']}; " + why_recent(r)) for i, (s, r, d) in enumerate(lists["recent"])],
+            "recent": [card(i + 1, s, r, d, f"Released {d['released']}; " + why_all(r, d)) for i, (s, r, d) in enumerate(lists["recent"])],
             "trending": [card(i + 1, s, r, d, "")   # why-text set below with the final Trending ranking
                          for i, (s, r, d) in enumerate(lists["trending"])],
         }
@@ -667,9 +669,9 @@ def build(yt: YouTube | None = None) -> dict:
                     user, n = _user_score(int(a.get("positive") or 0), int(a.get("negative") or 0))
                     d = _details(appid, state["details"], budget)
                     if user is not None and d and d.get("type") == "game":
-                        if ranking == "recent" and not ((d.get("released") or g.get("released") or "") >= year_ago):
+                        if ranking == "recent" and not ((d.get("released") or g.get("released") or "") >= recent_cut):
                             continue
-                        if ranking == "recent" and ((g.get("released") or "9999") < year_ago or _was_out_before(d, appid)):
+                        if ranking == "recent" and ((g.get("released") or "9999") < recent_cut or _was_out_before(d, appid)):
                             continue   # first released (Early Access) over a year ago
                         if set(d.get("genres") or []) & (NOT_GAMES | {"Software Training", "Utilities", "Education"}):
                             continue
@@ -686,7 +688,7 @@ def build(yt: YouTube | None = None) -> dict:
                         if r["user"] is None:
                             continue
                         sc = scorer(r, d)
-                        why = (f"Released {d.get('released') or g.get('released')}; " + why_recent(r)) if ranking == "recent" else why_all(r, d)
+                        why = (f"Released {d.get('released') or g.get('released')}; " if ranking == "recent" else "") + why_all(r, d)
                         extra.append(card(0, sc, r, d, why, rawg=g))
                         steam_ids.add(appid)
                         continue
@@ -721,7 +723,7 @@ def build(yt: YouTube | None = None) -> dict:
 
         notes = {}
         if len(out["recent"]) < 30:
-            notes["recent"] = (f"Only {len(out['recent'])} games in this genre were confirmed as released in the last 12 months"
+            notes["recent"] = (f"Only {len(out['recent'])} games in this genre were confirmed as released in the last 5 years"
                                + ("." if rawg_key else "; the full list (incl. PS5) arrives with the RAWG key."))
         if len(out["trending"]) < 30:
             notes["trending"] = (f"Only {len(out['trending'])} {name.lower()} game{'s' if len(out['trending']) != 1 else ''} "

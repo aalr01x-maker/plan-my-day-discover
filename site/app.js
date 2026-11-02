@@ -127,7 +127,7 @@ function note(text, label = "Ranked by") {
 const ABOUT = {
   news: "Stories are grouped across BBC, Reuters, AP, Al Jazeera, DW, France 24 and CNBC, then ranked by how many independent outlets confirm them (35%), significance (30%), recency (20%) and source reliability (15%). Duplicates are merged into one story.",
   movies: "Everything comes from IMDb: which titles exist, their genres, ratings and votes. Every list shows only titles rated 7.5+ out of 10, and ratings are weighted by number of votes, so a title with a few votes can't top the list.",
-  gaming: "Ranked only with Steam data. Best of All Time: one third review score, one third players right now, one third number of reviews. Best Recent (last 12 months): 65% review score + 35% number of reviews. Trending: 50% players right now + 50% review score. Review scores are weighted so a game with few reviews can't top the list, and counts are scaled so the biggest games don't win on size alone. Games not sold on Steam (Nintendo and PlayStation exclusives) aren't listed.",
+  gaming: "Ranked only with Steam data. Best of All Time: one third review score, one third players right now, one third number of reviews. Best Recent (last 5 years): one third review score, one third number of reviews, one third players right now. Trending: 50% players right now + 50% review score. Review scores are weighted so a game with few reviews can't top the list, and counts are scaled so the biggest games don't win on size alone. Games not sold on Steam (Nintendo and PlayStation exclusives) aren't listed.",
   music: "Ranked only by YouTube: views of each song's official upload (artist channel, VEVO or Topic). Last.fm, Deezer charts and MusicBrainz only decide which genre a song belongs to, never its rank.",
   sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
 };
@@ -373,7 +373,7 @@ async function gaming(parts, q) {
   const list = (g?.[ranking] || []).slice(0, 30);   // Top 30 (owner, 2 Nov 2026)
   heading("gaming", [g?.name, label(RANKINGS, ranking)]);
   note([`${g?.name || ""} games:`, { all_time: "Best of All Time: one third Steam review score (weighted so a few reviews can't top it), one third players on Steam right now, one third number of reviews.",
-    recent: "Best Recent: released in the last 12 months; 65% Steam review score + 35% number of reviews.",
+    recent: "Best Recent: released in the last 5 years; one third Steam review score, one third number of reviews, one third players on Steam right now.",
     trending: "Trending: 50% players on Steam right now + 50% Steam review score." }[ranking], g?.notes?.stale, g?.notes?.[ranking], g?.notes?.platforms].filter(Boolean).join(" "));
   paint(list, gameCard, gameDetail, "No games here yet.");
   return ["gaming", genre, ranking];
