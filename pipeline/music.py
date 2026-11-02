@@ -21,6 +21,7 @@ official videos are matched for the top songs within a small daily quota.
 """
 from __future__ import annotations
 
+import html
 import math
 import re
 import time
@@ -524,8 +525,11 @@ def _youtube_recent(yt: YouTube, gid: str, name: str, after, key: str | None, ar
     found = yt.search(query, after=after, max_age_days=7, max_results=50, order="viewCount", category="10")
     out = []
     for v in found:
-        title, channel = v.get("title") or "", v.get("channel") or ""
-        official = channel.endswith("VEVO") or channel.endswith(" - Topic") or "official" in title.lower()
+        title, channel = html.unescape(v.get("title") or ""), html.unescape(v.get("channel") or "")
+        raw_title = title
+        title = re.sub(r"#\S+", "", title)               # "#desihiphop #viralsong"
+        title = title.split(" | ")[0].strip()             # "DELHI SE MANALI | BADSHAH X ..." -> the song part
+        official = channel.endswith("VEVO") or channel.endswith(" - Topic") or "official" in raw_title.lower()
         if not official:
             continue
         if " - " in title:
@@ -534,7 +538,10 @@ def _youtube_recent(yt: YouTube, gid: str, name: str, after, key: str | None, ar
             artist, song = re.sub(r"(VEVO| - Topic)$", "", channel).strip(), title
         song = re.sub(r"[\(\[][^\)\]]*[\)\]]", "", song)   # "(Official Video)", "[Explicit]"
         song = JUNK.sub("", song).strip(" -|\"'")
-        artist = re.sub(r"\s*(ft\.?|feat\.?|x |&).*$", "", artist, flags=re.I).strip()
+        artist = re.sub(r"\s*(ft\.?|feat\.?|\bx\b|&|,).*$", "", artist, flags=re.I).strip()
+        song = re.sub(r"\s+(ft\.?|feat\.?)\s.*$", "", song, flags=re.I).strip()
+        if " - " not in title and channel:   # "BANGER Badshah x Sharvi ..." with no separator: drop the trailing names
+            song = re.split(r"\s+[A-Z][\w'.]*\s+x\s+", song)[0].strip()
         if not song or not artist:
             continue
         # the artist name must match the channel (no fan or label re-uploads of someone else's song)

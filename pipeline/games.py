@@ -217,6 +217,30 @@ def _rawg(key: str, params: dict, extra: dict, pages: int = 2) -> list[dict]:
 
 
 RAWG_DATES_PER_RUN = 200
+STEAM_RELEASE_PER_RUN = 300
+
+
+def _steam_release(appid: str, cache: dict, budget: list[int]) -> dict | None:
+    """Steam's own release record (IStoreBrowseService): steam_release_date, original_steam_release_date
+    (Early Access launch) and release_from_early_access_date. Cached 30 days."""
+    hit = cache.get(appid)
+    if hit and common.within(common.parse_time(hit["at"]), 30 * 24):
+        return hit["r"]
+    if budget[0] <= 0:
+        return hit["r"] if hit else None
+    budget[0] -= 1
+    payload = json.dumps({"ids": [{"appid": int(appid)}], "context": {"language": "english", "country_code": "US"},
+                          "data_request": {"include_release": True}})
+    try:
+        data = common.get("https://api.steampowered.com/IStoreBrowseService/GetItems/v1/", params={"input_json": payload})
+        items = (data.get("response") or {}).get("store_items") or []
+        rel = (items[0].get("release") or {}) if items else {}
+    except (common.FetchError, ValueError, AttributeError):
+        return hit["r"] if hit else None
+    out = {k: datetime.utcfromtimestamp(v).strftime("%Y-%m-%d") for k, v in rel.items()
+           if k.endswith("_date") and isinstance(v, int) and v > 0}
+    cache[appid] = {"at": common.iso(common.now_utc()), "r": out}
+    return out
 
 
 def _first_release(key: str | None, name: str, cache: dict, budget: list[int]) -> str | None:
@@ -409,8 +433,19 @@ def build(yt: YouTube | None = None) -> dict:
         score_recent = score_recent_factory(pre_recent)
         rawg_dates, rawg_budget = state.setdefault("rawg_first_release", {}), [RAWG_DATES_PER_RUN]
 
-        def _was_out_before(d) -> bool:
-            """Best Recent: a 1.0 launch of a game that was already out (Early Access) years ago."""
+        steam_rel, steam_rel_budget = state.setdefault("steam_release", {}), [STEAM_RELEASE_PER_RUN]
+
+        def _was_out_before(d, appid=None) -> bool:
+            """Best Recent: a 1.0 launch of a game that was already out in Early Access over a year ago.
+            Steam's own record first (original Early Access date; a game marked as having left Early
+            Access without one counts as old), RAWG's original date as a fallback."""
+            rel = _steam_release(appid, steam_rel, steam_rel_budget) if appid else None
+            if rel:
+                orig = rel.get("original_steam_release_date")
+                if orig:
+                    return orig < year_ago
+                if rel.get("release_from_early_access_date"):
+                    return True
             first = _first_release(rawg_key, d.get("name") or "", rawg_dates, rawg_budget)
             return bool(first and first < year_ago and first < (d.get("released") or "9999"))
 
@@ -418,7 +453,7 @@ def build(yt: YouTube | None = None) -> dict:
             out = []
             for r in pre:
                 d = detail(r, depth)
-                if d is None or (extra_filter and not extra_filter(d)):
+                if d is None or (extra_filter and not extra_filter(d, r["appid"])):
                     continue
                 out.append((scorer(r, d), r, d))
             out.sort(key=lambda x: -x[0])
@@ -426,8 +461,8 @@ def build(yt: YouTube | None = None) -> dict:
 
         lists = {
             "all_time": ranked(pre_all, score_all),
-            "recent": ranked(pre_recent, score_recent, lambda d: (d.get("released") or "") >= year_ago and not d.get("coming_soon")
-                             and not _was_out_before(d)),
+            "recent": ranked(pre_recent, score_recent, lambda d, appid: (d.get("released") or "") >= year_ago and not d.get("coming_soon")
+                             and not _was_out_before(d, appid)),
             # Trending only covers the ~130 games on Steam's activity charts, so a genre tag anywhere
             # in a game's top 12 counts (top 7 elsewhere)
             "trending": ranked(pre_trend, score_trend, depth=12),
@@ -511,8 +546,8 @@ def build(yt: YouTube | None = None) -> dict:
                     if user is not None and d and d.get("type") == "game":
                         if ranking == "recent" and not ((d.get("released") or g.get("released") or "") >= year_ago):
                             continue
-                        if ranking == "recent" and (g.get("released") or "9999") < year_ago:
-                            continue   # RAWG's original (Early Access) release is over a year old
+                        if ranking == "recent" and ((g.get("released") or "9999") < year_ago or _was_out_before(d, appid)):
+                            continue   # first released (Early Access) over a year ago
                         if set(d.get("genres") or []) & (NOT_GAMES | {"Software Training", "Utilities", "Education"}):
                             continue
                         r = {"appid": appid, "name": a.get("name") or g["name"], "developer": a.get("developer"),
