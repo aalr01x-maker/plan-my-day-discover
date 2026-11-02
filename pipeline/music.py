@@ -504,7 +504,7 @@ def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int
     return {"id": best["id"], "title": best["title"], "channel": best.get("channel"), "published": best.get("published")}
 
 
-RECENT_SEARCHES_PER_RUN = 8   # 100 units each; each genre's search is reused for 7 days
+RECENT_SEARCHES_PER_RUN = 18  # 100 units each; each search is reused for 7 days, so a genre refreshes weekly
 JUNK = re.compile(r"\b(official (music )?video|official audio|official visualizer|official lyric video|lyric video|lyrics|"
                   r"visualizer|audio|video|clip officiel|m/v|mv|4k|hd|explicit|clean)\b", re.I)
 
@@ -515,14 +515,25 @@ def _youtube_recent(yt: YouTube, gid: str, name: str, after, key: str | None, ar
     (owner, 2 Nov 2026: Best Recent missed the year's big hits that the music databases hadn't linked).
     Official = an artist channel, VEVO or the auto-generated "Topic" channel; the artist must belong to
     the genre on Last.fm."""
-    query = f"{name.split(' /')[0]} official music video"
-    cache_key = f"{query}|None|50|viewCount|10"
-    cached = (yt.cache.get("search") or {}).get(cache_key)
-    if not (cached and common.within(common.parse_time(cached["at"]), 7 * 24)):
-        if budget[0] <= 0 or yt.exhausted or yt.units >= YOUTUBE_CEILING:
-            return []
-        budget[0] -= 1
-    found = yt.search(query, after=after, max_age_days=7, max_results=50, order="viewCount", category="10")
+    # broad genres get three wordings (owner, 2 Nov 2026: a hit titled "Artist - Song" or posted as
+    # official audio was missed by the single "official music video" search); niche genres one
+    base = name.split(" /")[0].split(" &")[0]
+    alt = (GENRES[gid][1] or [base])[0]
+    queries = [f"{base} official music video"]
+    if gid in BIG_GENRES:
+        queries += [f"{alt if alt.lower() != base.lower() else base + ' song'} official video", f"{base} official audio"]
+    found, seen_ids = [], set()
+    for query in queries:
+        cache_key = f"{query}|None|50|viewCount|10"
+        cached = (yt.cache.get("search") or {}).get(cache_key)
+        if not (cached and common.within(common.parse_time(cached["at"]), 7 * 24)):
+            if budget[0] <= 0 or yt.exhausted or yt.units >= YOUTUBE_CEILING:
+                continue
+            budget[0] -= 1
+        for v in yt.search(query, after=after, max_age_days=7, max_results=50, order="viewCount", category="10"):
+            if v["id"] not in seen_ids:
+                seen_ids.add(v["id"])
+                found.append(v)
     out = []
     for v in found:
         title, channel = html.unescape(v.get("title") or ""), html.unescape(v.get("channel") or "")
