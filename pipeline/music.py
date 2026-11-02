@@ -93,6 +93,9 @@ FAMILY = {
     "arabic": r"arab|khaleeji|\brai\b|egypt|leban|middle east|shaabi|mahraganat|levant|syria|iraq|saudi|kuwait|morocc|algeri|tunisi",
 }
 STRONG_FIT = 0.8
+# genres where a stray tag let other artists in: the genre must be one of the artist's top 5 tags
+CORE_TAGS = {"rap": r"hip ?hop|rap|trap|drill|grime", "trap": r"trap|drill|hip ?hop|rap",
+             "conscious-rap": r"hip ?hop|rap"}
 
 # owner, 2 Nov 2026: Top 30 for All and the 14 broad genres, Top 20 for the 8 niche ones
 BIG_GENRES = {"all", "rap", "rock", "rnb", "edm-techno", "country", "jazz", "classical", "blues", "reggae", "indie",
@@ -849,9 +852,19 @@ def build(yt: YouTube | None = None) -> dict:
             out = []
             for x in cands:
                 v = yt_of(x)
-                if v:
+                if v and core_artist(x):
                     out.append({**x, "yt": v})
             return out
+
+        def core_artist(x) -> bool:
+            """Owner, 2 Nov 2026 (MGMT and Viking music showed up in Rap): for the hip-hop genres the
+            genre must be among the artist's TOP 5 Last.fm tags, not just anywhere in their tags."""
+            if gid not in CORE_TAGS or gid == "all":
+                return True
+            tags = _artist_tags_lastfm(x["artist"], key, artist_tags, tag_budget)
+            if tags is None:
+                return True   # unknown (no key or budget): keep the earlier checks' verdict
+            return bool(re.search(CORE_TAGS[gid], " | ".join(tags.split(" | ")[:5])))
 
         def top(rows, score, n=20):
             per: dict[str, int] = {}
