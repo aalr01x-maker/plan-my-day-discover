@@ -562,22 +562,24 @@ def build(yt: YouTube | None = None) -> dict:
                 c["rank"] = i + 1
             out[ranking] = merged
 
-        # Trending covers Steam's activity charts; niche genres are topped up to 20 with this genre's
-        # other Steam games, ranked by Steam's official live player count (70%) and reviews (30%)
-        if len(out["trending"]) < LIST_SIZE:
-            have = {c["id"] for c in out["trending"]}
-            pool = {c["id"]: c for lst in (out["all_time"], out["recent"]) for c in lst if c["id"] not in have and c.get("user")}
-            for c in pool.values():
-                if c.get("players_now") is None:
-                    c["players_now"] = _players_now(c["id"], players_now)
-            live = [c for c in pool.values() if (c.get("players_now") or 0) >= 50]
-            top_live = max((c["players_now"] for c in live), default=1)
-            live.sort(key=lambda c: -(0.7 * common.log_scale(c["players_now"], top_live) + 0.3 * c["user"]["score"] / 100))
-            for c in live[: LIST_SIZE - len(out["trending"])]:
-                out["trending"].append({**c, "why": f"{c['players_now']:,} people playing on Steam right now; "
-                                                     f"{c['user']['score']:.0f}% positive from {c['user']['reviews']:,} reviews."})
-            for i, c in enumerate(out["trending"]):
-                c["rank"] = i + 1
+        # Trending (owner, 2 Nov 2026): ONE ranking for the whole list -- 50% players on Steam right now
+        # (Steam's live count, the number shown on the card; log-scaled) + 50% Steam review score. The
+        # genre's other well-known games join the charted ones and everything is ranked together.
+        have = {c["id"] for c in out["trending"]}
+        pool = list(out["trending"]) + [c for c in {c["id"]: c for lst in (out["all_time"], out["recent"]) for c in lst
+                                                    if c["id"] not in have and c.get("user")}.values()]
+        for c in pool:
+            if c.get("players_now") is None:
+                c["players_now"] = _players_now(c["id"], players_now)
+        pool = [c for c in pool if (c.get("players_now") or 0) >= 50 and c.get("user")]
+
+        def live_score(c):
+            return 0.5 * common.log_scale(c["players_now"], max_ccu) + 0.5 * c["user"]["score"] / 100
+        pool.sort(key=live_score, reverse=True)
+        out["trending"] = [{**c, "rank": i + 1, "score": round(live_score(c), 4),
+                            "why": f"{c['players_now']:,} playing on Steam right now; "
+                                   f"{c['user']['score']:.0f}% positive from {c['user']['reviews']:,} reviews."}
+                           for i, c in enumerate(pool[:LIST_SIZE])]
 
         notes = {}
         if len(out["recent"]) < 30:
