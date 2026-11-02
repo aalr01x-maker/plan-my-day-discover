@@ -414,8 +414,8 @@ async function music(parts) {
   const g = data.genres[genre];
   heading("music", [g?.name, label(RANKINGS, ranking)]);
   note(`${g?.name || ""}: ` + ({ all_time: "Best of All Time: total YouTube views of the official video.",
-    recent: "Best Recent: released in the last 12 months; total YouTube views.",
-    trending: "Trending: ranked only by YouTube views gained per week (this week's measured gain, or views per week since posting for songs released in the last 2 years)." }[ranking]) +
+    recent: "Best Recent: ranked only by YouTube views gained per week (this week's measured gain, or views per week since posting for songs released in the last 2 years).",
+    trending: "Trending: released in the last 12 months; total YouTube views." }[ranking]) +
     (g?.notes?.[ranking] ? " " + g.notes[ranking] : ""));
   paint(g?.[ranking] || [], songCard, songDetail, "No songs here yet.");
   return ["music", genre, ranking];

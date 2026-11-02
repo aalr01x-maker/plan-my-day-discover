@@ -4,6 +4,8 @@ Every list is ranked by YouTube alone (owner, 31 Oct 2026); tags only decide whi
 genre a song belongs to:
 
   Best of All Time   YouTube views of the song's official upload
+  (Owner, 2 Nov 2026: the two rankings below are SWAPPED on the site -- "recent" holds the weekly-gain
+  ranking and "trending" the 12-month total-views ranking.)
   Best Recent        released in the last 12 months; YouTube views
   Trending (7 days)  YouTube views gained per week (between our daily counts), else
                      views per week since the video went up (under 2 years old) -- 100%
@@ -913,17 +915,19 @@ def build(yt: YouTube | None = None) -> dict:
                          for i, x in enumerate(all_time)],
             # owner, 2 Nov 2026: no padding with tiny songs -- a recent song needs at least 2% of the genre's
             # top recent song's views (and 50K), so a short list beats a wrong one
-            "recent": _renumber([c for c in (card(x, 0, "") for x in recent) if (c["released"] or "") >= year_ago
-                                 and c["metrics"]["views"] >= max(50_000, 0.02 * max((y["yt"]["views"] for y in recent), default=0))][:n]),
-            "trending": [card(x, i + 1, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.") for i, x in enumerate(trending)],
+            # owner, 2 Nov 2026: the two rankings swapped -- Best Recent = views gained per week,
+            # Trending = released in the last 12 months by total views (with the minimum-views rule)
+            "trending": _renumber([c for c in (card(x, 0, "") for x in recent) if (c["released"] or "") >= year_ago
+                                   and c["metrics"]["views"] >= max(50_000, 0.02 * max((y["yt"]["views"] for y in recent), default=0))][:n]),
+            "recent": [card(x, i + 1, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.") for i, x in enumerate(trending)],
         }
         notes = {}
         for k, lst in lists.items():
             if len(lst) < n and pending:
                 notes[k] = (f"{len(lst)} songs verified on YouTube so far; more are looked up every day "
                             f"(YouTube's free limit allows about {YOUTUBE_LOOKUPS} a day), so this list grows over the first days.")
-        if len(lists["recent"]) < n and not notes.get("recent"):
-            notes["recent"] = f"{len(lists['recent'])} songs in this genre from the last 12 months have an official YouTube video."
+        if len(lists["trending"]) < n and not notes.get("trending"):
+            notes["trending"] = f"{len(lists['recent'])} songs in this genre from the last 12 months have an official YouTube video."
         genres[gid] = {"name": name, "tags": tags, **lists, "notes": notes}
         common.log(f"music {gid}: {len(songs)} songs; {len(lists['all_time'])}/{len(lists['recent'])}/{len(lists['trending'])}")
 
