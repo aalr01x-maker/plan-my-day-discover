@@ -103,22 +103,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python - <<'PY' > note.md
-          import json, datetime
+          python scripts/daily_email.py > note.md
+          # a quiet line if a section kept yesterday's lists (the newsletter itself stays friendly)
+          python - <<'PY' >> note.md
+          import json
           try:
-              meta = json.load(open("state/last/meta.json"))
-          except Exception as e:
-              meta = {"sections": {}, "error": str(e)}
-          secs = meta.get("sections") or {}
+              secs = json.load(open("state/last/meta.json")).get("sections") or {}
+          except Exception:
+              secs = {}
           bad = [s for s, m in secs.items() if not m.get("ok")]
-          print("The daily update of https://plan-my-day-discover.web.app finished." if not bad
-                else f"The daily update finished, but these sections kept yesterday's data: {', '.join(bad)}.")
-          print()
-          for s, m in secs.items():
-              print(f"- {s}: {'updated' if m.get('ok') else 'NOT updated'} ({m.get('items')} items)" + (f" -- {m['error']}" if m.get("error") else ""))
+          if bad:
+              print(f"\n<sub>Today {', '.join(bad)} kept yesterday's picks.</sub>")
           PY
-          today=$(TZ=Asia/Kuwait date '+%a %d %b %Y, %H:%M')
-          status=$(grep -q "NOT updated" note.md && echo "needs a look" || echo "all sections updated")
-          url=$(gh issue create --title "Discover updated: $today Kuwait ($status)" --body-file note.md)
+          title=$(head -1 note.md)
+          tail -n +3 note.md > body.md
+          url=$(gh issue create --title "$title" --body-file body.md)
           gh issue close "$url" --reason completed >/dev/null || true
-
