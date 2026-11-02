@@ -33,6 +33,7 @@ of the game on Steam (SteamSpy tag lists alone are too loose: any game tagged
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from datetime import datetime, timedelta
@@ -545,7 +546,11 @@ def build(yt: YouTube | None = None) -> dict:
             return 0.5 * common.log_scale(r["ccu"], max_ccu) + 0.5 * quality(r)
 
         # pre-rank on review data, then confirm with store details (dates, type)
-        pre_all = sorted([r for r in rows if r["reviews"] >= 2000], key=score_all, reverse=True)[:90]
+        # genre first (Steam's own tags), THEN shortlist -- otherwise Steam's overall most-played games
+        # (Counter-Strike, Dota...) filled the shortlist and were all dropped as off-genre (Sports had 2)
+        def in_genre(r, depth=TOP_TAGS):
+            return not tags or any(t in (STEAM_TAGS.get(r["appid"]) or [])[:depth] for t in tags)
+        pre_all = sorted([r for r in rows if r["reviews"] >= 2000 and in_genre(r)], key=score_all, reverse=True)[:90]
         # Recent: store pages created in the last few years (higher app ids), most-reviewed first;
         # release dates are then checked against the store.
         charts = set(most_played) | set(two_weeks)
@@ -553,8 +558,8 @@ def build(yt: YouTube | None = None) -> dict:
         # with fewer reviews but a great score or many players isn't missed. Release dates (last 5 years)
         # are confirmed per game; more candidates are checked later while any could still reach the top 30.
         seller_list = list(sellers)
-        recent_pool = [r for r in rows if r["reviews"] >= 50 and (int(r["appid"]) >= 1_100_000 or r["appid"] in charts
-                                                                  or r["appid"] in set(seller_list))]
+        recent_pool = [r for r in rows if r["reviews"] >= 50 and in_genre(r) and (int(r["appid"]) >= 1_100_000 or r["appid"] in charts
+                                                                                    or r["appid"] in set(seller_list))]
         rising = {a for a, m in most_played.items() if m.get("last_week_rank") and m["rank"] < m["last_week_rank"]}
         picks: dict[str, dict] = {}
         for lst in (sorted(recent_pool, key=lambda r: -r["reviews"])[:40],                       # most reviews
