@@ -172,6 +172,7 @@ def _steam_reviews(appid: str) -> tuple[int, int] | None:
     return positive, n - positive
 
 
+STEAM_NAMES: dict[str, str] = {}
 STEAM_TAGS: dict[str, list[str]] = {}   # appid -> Steam's own tags (this run), for games SteamSpy hasn't tagged yet
 _TAG_NAMES: dict[int, str] = {}
 
@@ -203,6 +204,8 @@ def _steam_reviews_many(appids: list[str], cache: dict) -> None:
             continue
         for it in (data.get("response") or {}).get("store_items") or []:
             summ = ((it.get("reviews") or {}).get("summary_filtered") or {})
+            if it.get("appid") and it.get("name"):
+                STEAM_NAMES[str(it["appid"])] = it["name"]
             if it.get("appid") and it.get("tags"):   # Steam's own player tags, most votes first
                 names = _steam_tag_names()
                 STEAM_TAGS[str(it["appid"])] = [names[t["tagid"]] for t in sorted(it["tags"], key=lambda t: -t.get("weight", 0))
@@ -218,16 +221,16 @@ STEAM_TAG_IDS = {"all": None, "action": 19, "adventure": 21, "rpg": 122, "shoote
                  "sandbox": 3810, "racing": 699, "sports": 701, "strategy": 9, "simulation": 599, "horror": 1667}
 
 
-def _steam_top_sellers(tag_id: int | None, cache: dict, pages: int = 2) -> list[str]:
+def _steam_top_sellers(tag_id: int | None, cache: dict, pages: int = 2, filt: str = "topsellers") -> list[str]:
     """The top ~100 sellers on Steam for a tag (Steam's own store search), cached 1 day. Owner, 2 Nov 2026:
     Sports Trending missed NBA 2K, FC, Madden, Football Manager -- the activity charts alone are too thin."""
-    k = str(tag_id)
+    k = f"{tag_id}|{filt}" if filt != "topsellers" else str(tag_id)
     hit = cache.get(k)
     if hit and common.within(common.parse_time(hit["at"]), 24):
         return hit["ids"]
     ids: list[str] = []
     for page in range(pages):
-        params = {"start": page * 50, "count": 50, "category1": 998, "filter": "topsellers", "infinite": 1,
+        params = {"start": page * 50, "count": 50, "category1": 998, "filter": filt, "infinite": 1,
                   "cc": "us", "l": "english"}
         if tag_id:
             params["tags"] = tag_id
@@ -406,10 +409,7 @@ def build(yt: YouTube | None = None) -> dict:
     state.setdefault("tags", {})
     state.setdefault("rawg_stores", {})
     time.sleep(1.1)
-    try:
-        two_weeks = common.get(SPY, params={"request": "top100in2weeks"}, timeout=90) or {}
-    except common.FetchError:
-        two_weeks = {}
+    two_weeks: dict = {}   # SteamSpy's list isn't used any more (owner, 2 Nov 2026: Steam only)
     try:  # Steam's own most-played chart with last week's rank
         ranks = common.get("https://api.steampowered.com/ISteamChartsService/GetMostPlayedGames/v1/")["response"]["ranks"]
         most_played = {str(r["appid"]): r for r in ranks}
@@ -428,35 +428,36 @@ def build(yt: YouTube | None = None) -> dict:
         # Steam side: the games on Steam's own activity charts (genre verified per game below).
         # SteamSpy's genre-list endpoint stopped answering (31 Oct 2026), so it isn't used;
         # RAWG supplies the genre lists for All-time and Recent.
-        apps: dict[str, dict] = {}
-        sellers = _steam_top_sellers(STEAM_TAG_IDS.get(gid), state.setdefault("top_sellers", {}))
-        spy_top = _spy_tag_top(SPY_TAG_NAMES.get(gid), spy_cache)
-        for appid, a in spy_top.items():
-            apps[appid] = a
-        for appid in (set(most_played) | set(two_weeks) | set(sellers)) - set(spy_top):
-            a = two_weeks.get(appid)
-            if not a:
-                _tags(appid, state["tags"], tbudget)
-                a = (state["tags"].get(appid) or {}).get("a")
-            if a:
-                apps[appid] = a
-        if not apps:
+        # Steam only (owner, 2 Nov 2026): candidates from Steam's own lists for this genre -- top sellers
+        # (200), new & trending (100) and the most-played chart; reviews, players and tags from Steam's APIs
+        sellers = _steam_top_sellers(STEAM_TAG_IDS.get(gid), state.setdefault("top_sellers", {}), pages=4)
+        newish = _steam_top_sellers(STEAM_TAG_IDS.get(gid), state["top_sellers"], pages=2, filt="popularnew")
+        ids = list(dict.fromkeys(list(sellers) + list(newish) + list(most_played)))
+        _steam_reviews_many(ids, steam_totals)
+        rows = []
+        for appid in ids:
+            if appid not in steam_totals:
+                continue
+            pct, n, sold = steam_totals[appid]
+            if not sold:
+                continue   # no longer sold on Steam
+            pos = round(n * pct / 100)
+            user, n = _user_score(pos, n - pos)
+            if user is None:
+                continue
+            live = _players_now(appid, players_now)
+            ccu = int(live or 0)
+            h = ccu_hist.setdefault(appid, {})
+            h[today] = ccu
+            rows.append({"appid": appid, "name": STEAM_NAMES.get(appid), "developer": None, "user": user,
+                         "reviews": n, "ccu": ccu, "owners": None, "_steam": True})
+        if not rows:
             previous = (common.load_json(common.STATE / "last" / "games.json", {}).get("genres") or {}).get(gid)
             if previous:
                 previous.setdefault("notes", {})["stale"] = f"Steam data unavailable today; showing lists from {previous.get('built_at', 'the last update')}."
                 genres[gid] = previous
-            common.log(f"games {gid}: no SteamSpy data" + ("; kept previous lists" if previous else ""))
+            common.log(f"games {gid}: no Steam data" + ("; kept previous lists" if previous else ""))
             continue
-        rows = []
-        for appid, a in apps.items():
-            user, n = _user_score(int(a.get("positive") or 0), int(a.get("negative") or 0))
-            if user is None:
-                continue
-            ccu = int(a.get("ccu") or 0)
-            h = ccu_hist.setdefault(appid, {})
-            h[today] = ccu
-            rows.append({"appid": appid, "name": a.get("name"), "developer": a.get("developer"), "user": user,
-                         "reviews": n, "ccu": ccu, "owners": a.get("owners")})
         max_reviews = max(r["reviews"] for r in rows)
         max_ccu = max((r["ccu"] for r in rows), default=1) or 1
 
@@ -473,7 +474,7 @@ def build(yt: YouTube | None = None) -> dict:
 
         def detail(r, depth=TOP_TAGS):
             # SteamSpy's tags, or Steam's own when SteamSpy hasn't tagged a brand-new game (NBA 2K27, FM 27)
-            top = _tags(r["appid"], state["tags"], tbudget) or STEAM_TAGS.get(r["appid"])
+            top = STEAM_TAGS.get(r["appid"])   # Steam's own tags (owner, 2 Nov 2026: Steam only)
             if not top or (tags and not any(t in top[:depth] for t in tags)) or NOT_GAMES & set(top[:3]):
                 return None  # not really this genre (or not a game)
             d = _details(r["appid"], state["details"], budget)
@@ -669,7 +670,7 @@ def build(yt: YouTube | None = None) -> dict:
                 "user": {"score": r["user"], "reviews": r["reviews"], "source": "Steam reviews",
                          "confidence": _confidence(r["reviews"])},
                 "players_now": _players_now(r["appid"], players_now), "platforms": platforms,
-                "flags": _modes(d.get("categories"), (state["tags"].get(r["appid"]) or {}).get("t")),
+                "flags": _modes(d.get("categories"), STEAM_TAGS.get(r["appid"])),
                 "genres": d.get("genres"), "score": round(score, 4), "why": why,
                 "video": video or None, "trailer": d.get("trailer"),
                 "links": [{"name": "Steam", "url": f"https://store.steampowered.com/app/{r['appid']}/"}]
@@ -709,9 +710,14 @@ def build(yt: YouTube | None = None) -> dict:
                 if appid:
                     if appid in steam_ids:
                         continue
-                    _tags(appid, state["tags"], tbudget)
-                    a = (state["tags"].get(appid) or {}).get("a") or {}
-                    user, n = _user_score(int(a.get("positive") or 0), int(a.get("negative") or 0))
+                    _steam_reviews_many([appid], steam_totals)
+                    a = {"name": STEAM_NAMES.get(appid)}
+                    if appid in steam_totals:
+                        pct0, n0, _ = steam_totals[appid]
+                        p0 = round(n0 * pct0 / 100)
+                        user, n = _user_score(p0, n0 - p0)
+                    else:
+                        user, n = None, 0
                     d = _details(appid, state["details"], budget)
                     if user is not None and d and d.get("type") == "game":
                         if ranking == "recent" and not ((d.get("released") or g.get("released") or "") >= recent_cut):
