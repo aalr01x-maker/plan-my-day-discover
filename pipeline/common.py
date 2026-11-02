@@ -74,6 +74,11 @@ def within(dt: datetime | None, hours: float, now: datetime | None = None) -> bo
 
 # ---------- HTTP ----------
 
+# one shared connection pool: reusing connections avoids a new TLS handshake per request
+_SESSION = requests.Session()
+_SESSION.mount("https://", requests.adapters.HTTPAdapter(pool_connections=20, pool_maxsize=20))
+
+
 class FetchError(RuntimeError):
     pass
 
@@ -83,7 +88,7 @@ def get(url: str, *, params=None, headers=None, timeout=30, tries=3, as_json=Tru
     last = None
     for attempt in range(tries):
         try:
-            r = requests.get(url, params=params, headers={**UA, **(headers or {})}, timeout=timeout)
+            r = _SESSION.get(url, params=params, headers={**UA, **(headers or {})}, timeout=timeout)
             if r.status_code == 429 or r.status_code >= 500:
                 last = FetchError(f"HTTP {r.status_code} from {url.split('?')[0]}")
                 wait = float(r.headers.get("Retry-After", 0) or 0) or 2 * 3 ** attempt

@@ -85,7 +85,7 @@ def _modes(categories: list[str] | None, tags: list[str] | None) -> list[str]:
     return out
 MIN_REVIEWS = 500          # Bayesian weight
 PRIOR = 70.0
-DETAILS_PER_RUN = 300      # Steam store asks for <= ~200 requests / 5 minutes (1.5 s apart)
+DETAILS_PER_RUN = 900      # Steam store asks for <= ~200 requests / 5 minutes (1.5 s apart)
 TAGS_PER_RUN = 900         # SteamSpy asks for 1 request / second
 TOP_TAGS = 7
 NOT_GAMES = {"Software", "Utilities", "Design & Illustration", "Animation & Modeling", "Video Production",
@@ -386,6 +386,23 @@ def _rawg_stores(key: str, game_id: int, cache: dict) -> dict:
     return out
 
 
+def _players_many(appids: list[str], cache: dict) -> None:
+    """Live player counts for many games, 8 at a time (Steam's official API; owner wants Steam only)."""
+    from concurrent.futures import ThreadPoolExecutor
+    todo = [a for a in dict.fromkeys(appids) if a not in cache]
+
+    def one(appid):
+        try:
+            data = common.get("https://api.steampowered.com/ISteamUserStats/GetNumberOfCurrentPlayers/v1/",
+                              params={"appid": appid}, tries=2)
+            return appid, (data.get("response") or {}).get("player_count")
+        except common.FetchError:
+            return appid, None
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for appid, n in pool.map(one, todo):
+            cache[appid] = n
+
+
 def _players_now(appid: str, cache: dict) -> int | None:
     """Players in the game right now, from Steam's own official API."""
     if appid not in cache:
@@ -395,7 +412,6 @@ def _players_now(appid: str, cache: dict) -> int | None:
             cache[appid] = (data.get("response") or {}).get("player_count")
         except common.FetchError:
             cache[appid] = None
-        time.sleep(0.15)
     return cache[appid]
 
 
@@ -434,6 +450,7 @@ def build(yt: YouTube | None = None) -> dict:
         newish = _steam_top_sellers(STEAM_TAG_IDS.get(gid), state["top_sellers"], pages=2, filt="popularnew")
         ids = list(dict.fromkeys(list(sellers) + list(newish) + list(most_played)))
         _steam_reviews_many(ids, steam_totals)
+        _players_many(ids, players_now)
         rows = []
         for appid in ids:
             if appid not in steam_totals:
@@ -559,6 +576,7 @@ def build(yt: YouTube | None = None) -> dict:
 
         def steam_fill(rs):
             _steam_reviews_many([r["appid"] for r in rs], steam_totals)
+            _players_many([r["appid"] for r in rs], players_now)
             for r in rs:
                 if r.get("_steam"):
                     continue
@@ -594,7 +612,7 @@ def build(yt: YouTube | None = None) -> dict:
                     return orig < recent_cut
                 if rel.get("release_from_early_access_date"):
                     return True
-            first = _first_release(rawg_key, d.get("name") or "", rawg_dates, rawg_budget)
+            first = None   # Steam only (owner, 3 Nov 2026): Steam's own release record decides
             return bool(first and first < recent_cut and first < (d.get("released") or "9999"))
 
         def recent_filter(d, appid):
@@ -642,7 +660,7 @@ def build(yt: YouTube | None = None) -> dict:
         }
 
         rawg_by_name, rawg_lists = {}, {"all_time": [], "recent": []}
-        if rawg_key:
+        if rawg_key and False:   # owner, 3 Nov 2026: Steam only -- RAWG doesn't add candidates any more
             # RAWG only finds candidates (most-played first); Steam reviews decide the ranking
             for ranking, params, pages in (("all_time", {"ordering": "-added"}, 2),
                                            ("recent", {"dates": f"{recent_cut},{today}", "ordering": "-added"}, 5)):
