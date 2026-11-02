@@ -618,8 +618,13 @@ def build(yt: YouTube | None = None) -> dict:
                 c["players_now"] = _players_now(c["id"], players_now)
         pool = [c for c in pool if (c.get("players_now") or 0) >= 50 and c.get("user")]
 
+        # players: rank within this genre's pool (most played = 1.0, least = ~0), so the players half really
+        # separates a 20,000-player game from a 320-player one (owner, 2 Nov 2026; the log scale squeezed it)
+        by_players = sorted(pool, key=lambda c: c["players_now"])
+        prank = {c["id"]: (i + 1) / len(by_players) for i, c in enumerate(by_players)}
+
         def live_score(c):
-            return 0.5 * common.log_scale(c["players_now"], max_ccu) + 0.5 * c["user"]["score"] / 100
+            return 0.5 * prank[c["id"]] + 0.5 * c["user"]["score"] / 100
         pool.sort(key=live_score, reverse=True)
         out["trending"] = [{**c, "rank": i + 1, "score": round(live_score(c), 4),
                             "why": f"{c['players_now']:,} playing on Steam right now; "
