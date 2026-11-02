@@ -92,7 +92,8 @@ def get(url: str, *, params=None, headers=None, timeout=30, tries=3, as_json=Tru
             if r.status_code >= 400:
                 raise FetchError(f"HTTP {r.status_code} from {url.split('?')[0]}: {r.text[:160]}")
             return r.json() if as_json else r.text
-        except (requests.ConnectionError, requests.Timeout, ValueError) as exc:
+        except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.ContentDecodingError, ValueError) as exc:   # a cut-off response is retried too
             last = FetchError(f"{type(exc).__name__} for {url.split('?')[0]}: {str(exc)[:120]}")
             time.sleep(2 * 3 ** attempt)
     raise last or FetchError(f"failed: {url}")
@@ -111,7 +112,8 @@ def post_json(url: str, payload, *, timeout=30, tries=3):
             if r.status_code >= 400:
                 raise FetchError(f"HTTP {r.status_code} from {url}: {r.text[:160]}")
             return r.json()
-        except (requests.ConnectionError, requests.Timeout, ValueError) as exc:
+        except (requests.ConnectionError, requests.Timeout, requests.exceptions.ChunkedEncodingError,
+                requests.exceptions.ContentDecodingError, ValueError) as exc:   # a cut-off response is retried too
             last = FetchError(f"{type(exc).__name__} for {url}: {str(exc)[:120]}")
             time.sleep(2 * 3 ** attempt)
     raise last or FetchError(f"failed: {url}")
