@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write              # push the state branch (caches, history, last valid data)
+  issues: write                # the daily "Discover updated" note (GitHub emails it to the owner)
 
 concurrency:
   group: refresh
@@ -94,3 +95,30 @@ jobs:
           lines.append(f"\nAI: {ai.get('spent_usd')} of {ai.get('cap_usd')} USD this month; active={ai.get('active')} {ai.get('note') or ''}")
           open(os.environ["GITHUB_STEP_SUMMARY"], "a").write("\n".join(lines) + "\n")
           PY
+
+      # Owner, 2 Nov 2026: an email after each daily update. A short issue from the bot (GitHub emails
+      # new issues to the repo owner), closed straight away so the repo stays tidy.
+      - name: Email the owner (daily update done)
+        if: always() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY' > note.md
+          import json, datetime
+          try:
+              meta = json.load(open("state/last/meta.json"))
+          except Exception as e:
+              meta = {"sections": {}, "error": str(e)}
+          secs = meta.get("sections") or {}
+          bad = [s for s, m in secs.items() if not m.get("ok")]
+          print("The daily update of https://plan-my-day-discover.web.app finished." if not bad
+                else f"The daily update finished, but these sections kept yesterday's data: {', '.join(bad)}.")
+          print()
+          for s, m in secs.items():
+              print(f"- {s}: {'updated' if m.get('ok') else 'NOT updated'} ({m.get('items')} items)" + (f" -- {m['error']}" if m.get("error") else ""))
+          PY
+          today=$(TZ=Asia/Kuwait date '+%a %d %b %Y, %H:%M')
+          status=$(grep -q "NOT updated" note.md && echo "needs a look" || echo "all sections updated")
+          url=$(gh issue create --title "Discover updated: $today Kuwait ($status)" --body-file note.md)
+          gh issue close "$url" --reason completed >/dev/null || true
+
