@@ -916,11 +916,8 @@ def build(yt: YouTube | None = None) -> dict:
             # Trending = released in the last 12 months by total views (with the minimum-views rule)
             "trending": _renumber([c for c in (card(x, 0, "") for x in recent) if (c["released"] or "") >= year_ago
                                    and c["metrics"]["views"] >= max(50_000, 0.02 * max((y["yt"]["views"] for y in recent), default=0))][:n]),
-            # Best Recent = weekly gain, but only songs released in the last 12 months: an old classic gaining
-            # views ("Scenario", 1991) is not a recent song
-            "recent": _renumber([c for c in (card(x, 0, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.")
-                                             for x in t_rows_sorted if (x.get("released") or "") >= year_ago)
-                                 if (c["released"] or "") >= year_ago][:n], keep_why=True),
+            # Best Recent = views gained this week, any release year (owner, 2 Nov 2026)
+            "recent": [card(x, i + 1, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.") for i, x in enumerate(trending)],
         }
         notes = {}
         for k, lst in lists.items():
