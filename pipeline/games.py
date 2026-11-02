@@ -224,6 +224,33 @@ def _steam_top_sellers(tag_id: int | None, cache: dict, pages: int = 2) -> list[
     return ids or (hit["ids"] if hit else [])
 
 
+SPY_TAG_NAMES = {"action": "Action", "adventure": "Adventure", "rpg": "RPG", "shooters": "Shooter",
+                 "open-world": "Open World", "sandbox": "Sandbox", "racing": "Racing", "sports": "Sports",
+                 "strategy": "Strategy", "simulation": "Simulation", "horror": "Horror"}
+
+
+def _spy_tag_top(tag: str | None, cache: dict, n: int = 150) -> dict[str, dict]:
+    """Every Steam game with this tag (SteamSpy's tag list), keeping the n most played -- only to decide
+    WHICH games are considered; their ranking uses Steam's own live players and reviews. Cached 1 day;
+    SteamSpy asks for at most one such list request a minute."""
+    if not tag:
+        return {}
+    hit = cache.get(tag)
+    if hit and common.within(common.parse_time(hit["at"]), 24):
+        return hit["apps"]
+    time.sleep(61 if cache.get("_called_this_run") else 0)
+    cache["_called_this_run"] = True
+    try:
+        data = common.get(SPY, params={"request": "tag", "tag": tag}, timeout=90) or {}
+    except common.FetchError as exc:
+        common.log(f"games: steamspy tag {tag}: {exc}")
+        return hit["apps"] if hit else {}
+    top = sorted(data.values(), key=lambda a: -int(a.get("ccu") or 0))[:n]
+    apps = {str(a["appid"]): {f: a.get(f) for f in ("name", "developer", "positive", "negative", "ccu", "owners")} for a in top}
+    cache[tag] = {"at": common.iso(common.now_utc()), "apps": apps}
+    return apps
+
+
 def _tags(appid: str, cache: dict, budget: list[int]) -> list[str] | None:
     """The game's top player tags (most votes first) and review numbers, cached 30 days, or 5 days
     for games with under 5,000 reviews (new games' review counts grow fast)."""
@@ -372,6 +399,8 @@ def build(yt: YouTube | None = None) -> dict:
     budget, vbudget, tbudget = [DETAILS_PER_RUN], [VIDEOS_PER_RUN], [TAGS_PER_RUN]
     players_now: dict = {}
     steam_totals: dict = {}   # appid -> (percent positive, review count), Steam's own, this run
+    spy_cache = state.setdefault("spy_tag_top", {})
+    spy_cache.pop("_called_this_run", None)
     ccu_hist = state["ccu"]
 
     genres = {}
@@ -381,7 +410,10 @@ def build(yt: YouTube | None = None) -> dict:
         # RAWG supplies the genre lists for All-time and Recent.
         apps: dict[str, dict] = {}
         sellers = _steam_top_sellers(STEAM_TAG_IDS.get(gid), state.setdefault("top_sellers", {}))
-        for appid in set(most_played) | set(two_weeks) | set(sellers):
+        spy_top = _spy_tag_top(SPY_TAG_NAMES.get(gid), spy_cache)
+        for appid, a in spy_top.items():
+            apps[appid] = a
+        for appid in (set(most_played) | set(two_weeks) | set(sellers)) - set(spy_top):
             a = two_weeks.get(appid)
             if not a:
                 _tags(appid, state["tags"], tbudget)
@@ -482,6 +514,9 @@ def build(yt: YouTube | None = None) -> dict:
                             key=lambda r: -r["reviews"])[:200]
         pre_trend = sorted(rows, key=lambda r: -(r["ccu"] + (20000 if r["appid"] in most_played else 0)
                                                  + (5000 if r["appid"] in two_weeks else 0)))[:150]
+        # Steam's current top sellers always get considered (SteamSpy hasn't caught up with brand-new games)
+        seller_set, have = set(sellers[:60]), {r["appid"] for r in pre_trend}
+        pre_trend += [r for r in rows if r["appid"] in seller_set and r["appid"] not in have]
 
         # Steam only (owner, 2 Nov 2026): review score/count and players now come from Steam itself for
         # every game that can make a list; SteamSpy only helps find candidates and their genre tags
