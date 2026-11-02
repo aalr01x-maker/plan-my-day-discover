@@ -531,9 +531,21 @@ def build(yt: YouTube | None = None) -> dict:
         # Recent: store pages created in the last few years (higher app ids), most-reviewed first;
         # release dates are then checked against the store.
         charts = set(most_played) | set(two_weeks)
-        pre_recent = sorted([r for r in rows if r["reviews"] >= 50 and (int(r["appid"]) >= 1_100_000 or r["appid"] in charts
-                                                                    or r["appid"] in set(sellers))],
-                            key=lambda r: -r["reviews"])[:80]   # shortlist; the site shows the top 30
+        # Best Recent candidates (owner, 2 Nov 2026): four independent lists, merged by app id, so a game
+        # with fewer reviews but a great score or many players isn't missed. Release dates (last 5 years)
+        # are confirmed per game; more candidates are checked later while any could still reach the top 30.
+        seller_list = list(sellers)
+        recent_pool = [r for r in rows if r["reviews"] >= 50 and (int(r["appid"]) >= 1_100_000 or r["appid"] in charts
+                                                                  or r["appid"] in set(seller_list))]
+        rising = {a for a, m in most_played.items() if m.get("last_week_rank") and m["rank"] < m["last_week_rank"]}
+        picks: dict[str, dict] = {}
+        for lst in (sorted(recent_pool, key=lambda r: -r["reviews"])[:40],                       # most reviews
+                    sorted(recent_pool, key=lambda r: -r["ccu"])[:40],                           # most players
+                    sorted([r for r in recent_pool if r["reviews"] >= 500], key=lambda r: -r["user"])[:40],  # best score
+                    [r for r in recent_pool if r["appid"] in set(seller_list[:30]) | rising][:20]):  # new and rising
+            for r in lst:
+                picks.setdefault(r["appid"], r)
+        pre_recent = list(picks.values())
         pre_trend = sorted(rows, key=lambda r: -(r["ccu"] + (20000 if r["appid"] in most_played else 0)
                                                  + (5000 if r["appid"] in two_weeks else 0)))[:150]
         # Steam's current top sellers always get considered (SteamSpy hasn't caught up with brand-new games)
@@ -543,16 +555,24 @@ def build(yt: YouTube | None = None) -> dict:
         # Steam only (owner, 2 Nov 2026): review score/count and players now come from Steam itself for
         # every game that can make a list; SteamSpy only helps find candidates and their genre tags
         cands = {r["appid"]: r for r in pre_all + pre_recent + pre_trend}
-        _steam_reviews_many(list(cands), steam_totals)
-        for r in cands.values():
-            if r["appid"] in steam_totals:
-                pct, n, sold = steam_totals[r["appid"]]
-                pos = round(n * pct / 100)
-                r["user"], r["reviews"] = _user_score(pos, n - pos)
-                if not sold:
-                    r["user"] = None   # no longer sold on Steam: dropped from every list below
-            live = _players_now(r["appid"], players_now)
-            r["ccu"] = int(live or 0)
+
+        def steam_fill(rs):
+            _steam_reviews_many([r["appid"] for r in rs], steam_totals)
+            for r in rs:
+                if r.get("_steam"):
+                    continue
+                r["_steam"] = True
+                if r["appid"] in steam_totals:
+                    pct, n, sold = steam_totals[r["appid"]]
+                    pos = round(n * pct / 100)
+                    r["user"], r["reviews"] = _user_score(pos, n - pos)
+                    if not sold:
+                        r["user"] = None   # no longer sold on Steam: dropped from every list below
+                live = _players_now(r["appid"], players_now)
+                # unknown (Steam didn't answer) is not zero: keep SteamSpy's latest count as the estimate
+                r["ccu"] = int(live) if live is not None else int(r.get("ccu") or 0)
+
+        steam_fill(list(cands.values()))
         for lst in (pre_all, pre_recent, pre_trend):
             lst[:] = [r for r in lst if r["user"] is not None]
         max_ccu = max((r["ccu"] for r in cands.values()), default=1) or 1
@@ -576,6 +596,32 @@ def build(yt: YouTube | None = None) -> dict:
             first = _first_release(rawg_key, d.get("name") or "", rawg_dates, rawg_budget)
             return bool(first and first < recent_cut and first < (d.get("released") or "9999"))
 
+        def recent_filter(d, appid):
+            return (d.get("released") or "") >= recent_cut and not d.get("coming_soon") and not _was_out_before(d, appid)
+
+        def recent_ranked():
+            """Rank the candidates; then, in batches of 25, check any unchecked game whose best possible
+            score (SteamSpy's numbers, players allowed to be 3x yesterday's peak) could still beat #30."""
+            checked = {r["appid"] for r in pre_recent}
+            pool = list(pre_recent)
+            out = ranked(pool, score_recent, recent_filter)
+            for _ in range(6):
+                floor = out[29][0] if len(out) >= 30 else 0.0
+
+                def best_case(r):
+                    return (0.333 * min(1.0, (r["user"] + 2) / 100) + 0.334 * common.log_scale(r["reviews"] * 1.1, max_reviews)
+                            + 0.333 * common.log_scale(3 * r["ccu"] + 50, max_ccu))
+                rest = [r for r in recent_pool if r["appid"] not in checked and r["user"] is not None and best_case(r) > floor]
+                if not rest:
+                    break
+                batch = sorted(rest, key=best_case, reverse=True)[:25]
+                checked |= {r["appid"] for r in batch}
+                steam_fill(batch)
+                pool += [r for r in batch if r["user"] is not None]
+                out = ranked(pool, score_recent, recent_filter)
+            common.log(f"games {gid}: Best Recent checked {len(checked)} candidates")
+            return out
+
         def ranked(pre, scorer, extra_filter=None, depth=TOP_TAGS):
             out = []
             for r in pre:
@@ -588,8 +634,7 @@ def build(yt: YouTube | None = None) -> dict:
 
         lists = {
             "all_time": ranked(pre_all, score_all),
-            "recent": ranked(pre_recent, score_recent, lambda d, appid: (d.get("released") or "") >= recent_cut and not d.get("coming_soon")
-                             and not _was_out_before(d, appid)),
+            "recent": recent_ranked(),
             # Trending only covers the ~130 games on Steam's activity charts, so a genre tag anywhere
             # in a game's top 12 counts (top 7 elsewhere)
             "trending": ranked(pre_trend, score_trend, depth=12),
