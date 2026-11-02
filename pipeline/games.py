@@ -172,6 +172,20 @@ def _steam_reviews(appid: str) -> tuple[int, int] | None:
     return positive, n - positive
 
 
+STEAM_TAGS: dict[str, list[str]] = {}   # appid -> Steam's own tags (this run), for games SteamSpy hasn't tagged yet
+_TAG_NAMES: dict[int, str] = {}
+
+
+def _steam_tag_names() -> dict[int, str]:
+    if not _TAG_NAMES:
+        try:
+            for t in common.get("https://api.steampowered.com/IStoreService/GetTagList/v1/", params={"language": "english"})["response"]["tags"]:
+                _TAG_NAMES[int(t["tagid"])] = t["name"]
+        except (common.FetchError, KeyError, TypeError, ValueError) as exc:
+            common.log(f"games: Steam tag list unavailable: {exc}")
+    return _TAG_NAMES
+
+
 def _steam_reviews_many(appids: list[str], cache: dict) -> None:
     """Steam's own review totals for many games at once (IStoreBrowseService, 50 per request), into
     cache[appid] = (percent positive, review count, still sold). Owner, 2 Nov 2026: every number from
@@ -181,7 +195,7 @@ def _steam_reviews_many(appids: list[str], cache: dict) -> None:
         batch = todo[i:i + 50]
         payload = json.dumps({"ids": [{"appid": int(a)} for a in batch], "context": {"language": "english", "country_code": "US"},
                               "data_request": {"include_reviews": True, "include_basic_info": True,
-                                               "include_purchase_options": True}})
+                                               "include_purchase_options": True, "include_tag_count": 20}})
         try:
             data = common.get("https://api.steampowered.com/IStoreBrowseService/GetItems/v1/", params={"input_json": payload})
         except (common.FetchError, ValueError) as exc:
@@ -189,6 +203,10 @@ def _steam_reviews_many(appids: list[str], cache: dict) -> None:
             continue
         for it in (data.get("response") or {}).get("store_items") or []:
             summ = ((it.get("reviews") or {}).get("summary_filtered") or {})
+            if it.get("appid") and it.get("tags"):   # Steam's own player tags, most votes first
+                names = _steam_tag_names()
+                STEAM_TAGS[str(it["appid"])] = [names[t["tagid"]] for t in sorted(it["tags"], key=lambda t: -t.get("weight", 0))
+                                                if t.get("tagid") in names]
             if it.get("appid") and summ.get("review_count"):
                 sold = bool(it.get("is_free") or it.get("best_purchase_option") or it.get("purchase_options"))
                 cache[str(it["appid"])] = (int(summ.get("percent_positive") or 0), int(summ["review_count"]), sold)
@@ -452,7 +470,8 @@ def build(yt: YouTube | None = None) -> dict:
             return max(-1.0, min(3.0, (h[days[-1]] - h[days[0]]) / h[days[0]]))
 
         def detail(r, depth=TOP_TAGS):
-            top = _tags(r["appid"], state["tags"], tbudget)
+            # SteamSpy's tags, or Steam's own when SteamSpy hasn't tagged a brand-new game (NBA 2K27, FM 27)
+            top = _tags(r["appid"], state["tags"], tbudget) or STEAM_TAGS.get(r["appid"])
             if not top or (tags and not any(t in top[:depth] for t in tags)) or NOT_GAMES & set(top[:3]):
                 return None  # not really this genre (or not a game)
             d = _details(r["appid"], state["details"], budget)
