@@ -783,6 +783,7 @@ def build(yt: YouTube | None = None) -> dict:
             notes["platforms"] = "Console platforms (incl. PS5) appear once the RAWG key is added; until then only Steam data is used."
         genres[gid] = {"name": name, **out, "notes": notes, "built_at": common.iso(now)}
         common.log(f"games {gid}: {len(rows)} games; {len(out['all_time'])}/{len(out['recent'])}/{len(out['trending'])}")
+        common.progress("games", list(GENRES).index(gid) + 1, len(GENRES), gid)
 
     # bound state: ccu history 10 days
     cut = (now - timedelta(days=10)).strftime("%Y-%m-%d")

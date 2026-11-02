@@ -943,6 +943,7 @@ def build(yt: YouTube | None = None) -> dict:
         if len(lists["trending"]) < n and not notes.get("trending"):
             notes["trending"] = f"{len(lists['recent'])} songs in this genre from the last 12 months have an official YouTube video."
         genres[gid] = {"name": name, "tags": tags, **lists, "notes": notes}
+        common.progress("music", len(genres), len(prepared), gid)
         common.log(f"music {gid}: {len(songs)} songs; {len(lists['all_time'])}/{len(lists['recent'])}/{len(lists['trending'])}")
 
     common.log(f"music: {lookups[0]} songs looked up ({YOUTUBE_LOOKUPS - search_budget[0]} by search), "

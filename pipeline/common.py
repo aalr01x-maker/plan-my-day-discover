@@ -185,3 +185,39 @@ def log_scale(x: float, cap: float) -> float:
     if x <= 0:
         return 0.0
     return min(1.0, math.log1p(x) / math.log1p(cap))
+
+
+# ---------- live progress (owner, 3 Nov 2026: so a running update can be timed from outside) ----------
+_PROGRESS = {"started": None, "last_push": 0.0, "lines": {}}
+
+
+def progress(section: str, done: int, total: int, note: str = "") -> None:
+    """Record '<section>: done/total' and, at most once a minute, push it to the 'progress' branch
+    (progress.json). Only inside GitHub Actions; never fails the run."""
+    import os
+    import subprocess
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+    now_ts = time.time()
+    _PROGRESS["started"] = _PROGRESS["started"] or now_ts
+    _PROGRESS["lines"][section] = {"done": done, "total": total, "note": note, "at": iso(now_utc()),
+                                   "elapsed_min": round((now_ts - _PROGRESS["started"]) / 60, 1)}
+    if now_ts - _PROGRESS["last_push"] < 60 and done < total:
+        return
+    _PROGRESS["last_push"] = now_ts
+    payload = json.dumps({"run": os.environ.get("GITHUB_RUN_ID"), "sections": _PROGRESS["lines"]}, indent=1)
+    script = (
+        "set -e; d=$(mktemp -d); cd \"$d\"; git init -q; "
+        "git remote add origin \"$(git -C \"$GITHUB_WORKSPACE\" remote get-url origin)\"; "
+        "git -c http.extraheader=\"$(git -C \"$GITHUB_WORKSPACE\" config --get http.https://github.com/.extraheader)\" "
+        "fetch -q origin progress 2>/dev/null || true; "
+        "printf '%s' \"$PAYLOAD\" > progress.json; git add progress.json; "
+        "git -c user.name=bot -c user.email=bot@users.noreply.github.com commit -qm progress; "
+        "git -c http.extraheader=\"$(git -C \"$GITHUB_WORKSPACE\" config --get http.https://github.com/.extraheader)\" "
+        "push -qf origin HEAD:progress")
+    try:
+        subprocess.run(["bash", "-c", script], env={**os.environ, "PAYLOAD": payload}, timeout=30,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+

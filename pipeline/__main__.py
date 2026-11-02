@@ -47,7 +47,8 @@ def main(argv: list[str]) -> int:
         "sports": lambda: sports.build(ai, yt),
     }
     failures = 0
-    for section in wanted:
+    for n_done, section in enumerate(wanted):
+        common.progress("run", n_done, len(wanted), f"starting {section}")
         entry = meta["sections"].setdefault(section, {})
         entry["last_attempt"] = common.iso(common.now_utc())
         try:
