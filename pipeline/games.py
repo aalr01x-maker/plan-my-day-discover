@@ -172,6 +172,26 @@ def _steam_reviews(appid: str) -> tuple[int, int] | None:
     return positive, n - positive
 
 
+def _steam_reviews_many(appids: list[str], cache: dict) -> None:
+    """Steam's own review totals for many games at once (IStoreBrowseService, 50 per request), into
+    cache[appid] = (percent positive, review count). Owner, 2 Nov 2026: every number from Steam itself."""
+    todo = [a for a in dict.fromkeys(appids) if a not in cache]
+    for i in range(0, len(todo), 50):
+        batch = todo[i:i + 50]
+        payload = json.dumps({"ids": [{"appid": int(a)} for a in batch], "context": {"language": "english", "country_code": "US"},
+                              "data_request": {"include_reviews": True}})
+        try:
+            data = common.get("https://api.steampowered.com/IStoreBrowseService/GetItems/v1/", params={"input_json": payload})
+        except (common.FetchError, ValueError) as exc:
+            common.log(f"games: Steam review totals batch failed: {exc}")
+            continue
+        for it in (data.get("response") or {}).get("store_items") or []:
+            summ = ((it.get("reviews") or {}).get("summary_filtered") or {})
+            if it.get("appid") and summ.get("review_count"):
+                cache[str(it["appid"])] = (int(summ.get("percent_positive") or 0), int(summ["review_count"]))
+        time.sleep(0.3)
+
+
 def _tags(appid: str, cache: dict, budget: list[int]) -> list[str] | None:
     """The game's top player tags (most votes first) and review numbers, cached 30 days, or 5 days
     for games with under 5,000 reviews (new games' review counts grow fast)."""
@@ -319,6 +339,7 @@ def build(yt: YouTube | None = None) -> dict:
     rawg_key = common.env("RAWG_API_KEY")
     budget, vbudget, tbudget = [DETAILS_PER_RUN], [VIDEOS_PER_RUN], [TAGS_PER_RUN]
     players_now: dict = {}
+    steam_totals: dict = {}   # appid -> (percent positive, review count), Steam's own, this run
     ccu_hist = state["ccu"]
 
     genres = {}
@@ -389,9 +410,8 @@ def build(yt: YouTube | None = None) -> dict:
         def longterm(r):   # lasting popularity: how many people own it on Steam
             return common.log_scale(owners_mid(r), max_owners)
 
-        def retention(r):  # share of owners still playing: live players per owner
-            o = owners_mid(r)
-            return min(1.0, (r["ccu"] / o) * 200) if o else 0.0   # 0.5% of owners online at once = full marks
+        def retention(r):  # still being played: Steam players now per Steam review (5% = full marks)
+            return min(1.0, r["ccu"] / max(1, r["reviews"]) * 20)
 
         def week_ccu(appid: str) -> tuple[float, float, float]:
             """(average players over 7 days, % change, players gained) from our daily snapshots."""
@@ -430,6 +450,21 @@ def build(yt: YouTube | None = None) -> dict:
         pre_trend = sorted(rows, key=lambda r: -(r["ccu"] + (20000 if r["appid"] in most_played else 0)
                                                  + (5000 if r["appid"] in two_weeks else 0)))[:150]
 
+        # Steam only (owner, 2 Nov 2026): review score/count and players now come from Steam itself for
+        # every game that can make a list; SteamSpy only helps find candidates and their genre tags
+        cands = {r["appid"]: r for r in pre_all + pre_recent + pre_trend}
+        _steam_reviews_many(list(cands), steam_totals)
+        for r in cands.values():
+            if r["appid"] in steam_totals:
+                pct, n = steam_totals[r["appid"]]
+                pos = round(n * pct / 100)
+                r["user"], r["reviews"] = _user_score(pos, n - pos)
+            live = _players_now(r["appid"], players_now)
+            r["ccu"] = int(live or 0)
+        for lst in (pre_all, pre_recent, pre_trend):
+            lst[:] = [r for r in lst if r["user"] is not None]
+        max_ccu = max((r["ccu"] for r in cands.values()), default=1) or 1
+        max_reviews = max((r["reviews"] for r in cands.values()), default=1) or 1
         score_recent = score_recent_factory(pre_recent)
         rawg_dates, rawg_budget = state.setdefault("rawg_first_release", {}), [RAWG_DATES_PER_RUN]
 
@@ -509,18 +544,13 @@ def build(yt: YouTube | None = None) -> dict:
             }
 
         def why_all(r, d):
-            return f"{r['user']:.0f}% positive Steam reviews (weighted) from {r['reviews']:,} reviews."
+            return (f"{r['user']:.0f}% positive Steam reviews (weighted) from {r['reviews']:,} reviews; "
+                    f"{r['ccu']:,} playing on Steam right now.")
 
         out = {
             "all_time": [card(i + 1, s, r, d, why_all(r, d)) for i, (s, r, d) in enumerate(lists["all_time"])],
             "recent": [card(i + 1, s, r, d, f"Released {d['released']}; " + why_all(r, d)) for i, (s, r, d) in enumerate(lists["recent"])],
-            "trending": [card(i + 1, s, r, d, f"{r['ccu']:,} peak players in a day on Steam (SteamSpy)"
-                              + (f"; #{most_played[r['appid']]['rank']} on Steam's most-played chart"
-                                 + (f" (was #{most_played[r['appid']]['last_week_rank']} last week)"
-                                    if most_played[r['appid']].get('last_week_rank') else "")
-                                 if r["appid"] in most_played else "")
-                              + ("; in Steam's 2-week top 100" if r["appid"] in two_weeks else "")
-                              + (f"; players {ccu_growth(r['appid']):+.0%} this week" if ccu_growth(r["appid"]) else "") + ".")
+            "trending": [card(i + 1, s, r, d, "")   # why-text set below with the final Trending ranking
                          for i, (s, r, d) in enumerate(lists["trending"])],
         }
         # RAWG's genre lists add games beyond Steam's charts. A game that is on Steam (RAWG gives its
@@ -552,6 +582,14 @@ def build(yt: YouTube | None = None) -> dict:
                             continue
                         r = {"appid": appid, "name": a.get("name") or g["name"], "developer": a.get("developer"),
                              "user": user, "reviews": n, "ccu": int(a.get("ccu") or 0), "owners": a.get("owners")}
+                        _steam_reviews_many([appid], steam_totals)   # Steam's own numbers (owner, 2 Nov 2026)
+                        if appid in steam_totals:
+                            pct, tot = steam_totals[appid]
+                            pos = round(tot * pct / 100)
+                            r["user"], r["reviews"] = _user_score(pos, tot - pos)
+                        r["ccu"] = int(_players_now(appid, players_now) or 0)
+                        if r["user"] is None:
+                            continue
                         sc = scorer(r, d)
                         why = (f"Released {d.get('released') or g.get('released')}; " if ranking == "recent" else "") + why_all(r, d)
                         extra.append(card(0, sc, r, d, why, rawg=g))
