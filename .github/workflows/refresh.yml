@@ -116,6 +116,10 @@ jobs:
               print(f"\n<sub>Today {', '.join(bad)} kept yesterday's picks.</sub>")
           PY
           title=$(head -1 note.md)
+          # one email a day: a late scheduled run after a manual full run doesn't send a second one
+          if [ -n "$(gh issue list --state all --limit 20 --json title -q ".[] | select(.title == \"$title\") | .title")" ]; then
+            echo "Today's email was already sent."; exit 0
+          fi
           tail -n +3 note.md > body.md
           url=$(gh issue create --title "$title" --body-file body.md)
           gh issue close "$url" --reason completed >/dev/null || true
