@@ -85,7 +85,7 @@ def _modes(categories: list[str] | None, tags: list[str] | None) -> list[str]:
     return out
 MIN_REVIEWS = 500          # Bayesian weight
 PRIOR = 70.0
-DETAILS_PER_RUN = 900      # Steam store asks for <= ~200 requests / 5 minutes (1.5 s apart)
+DETAILS_PER_RUN = 300      # Steam store asks for <= ~200 requests / 5 minutes (1.5 s apart)
 TAGS_PER_RUN = 900         # SteamSpy asks for 1 request / second
 TOP_TAGS = 7
 NOT_GAMES = {"Software", "Utilities", "Design & Illustration", "Animation & Modeling", "Video Production",
@@ -316,8 +316,8 @@ def _rawg(key: str, params: dict, extra: dict, pages: int = 2) -> list[dict]:
     return out
 
 
-RAWG_DATES_PER_RUN = 200
-STEAM_RELEASE_PER_RUN = 300
+RAWG_DATES_PER_RUN = 80
+STEAM_RELEASE_PER_RUN = 120
 
 
 def _steam_release(appid: str, cache: dict, budget: list[int]) -> dict | None:
