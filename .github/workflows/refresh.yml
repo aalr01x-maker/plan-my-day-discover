@@ -99,7 +99,7 @@ jobs:
       # Owner, 2 Nov 2026: an email after each daily update. A short issue from the bot (GitHub emails
       # new issues to the repo owner), closed straight away so the repo stays tidy.
       - name: Email the owner (daily update done)
-        if: always() && github.event_name == 'schedule'
+        if: always() && (github.event_name == 'schedule' || github.event.inputs.sections == '')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
