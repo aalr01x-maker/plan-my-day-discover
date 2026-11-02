@@ -533,7 +533,7 @@ def build(yt: YouTube | None = None) -> dict:
         charts = set(most_played) | set(two_weeks)
         pre_recent = sorted([r for r in rows if r["reviews"] >= 50 and (int(r["appid"]) >= 1_100_000 or r["appid"] in charts
                                                                     or r["appid"] in set(sellers))],
-                            key=lambda r: -r["reviews"])[:300]
+                            key=lambda r: -r["reviews"])[:80]   # shortlist; the site shows the top 30
         pre_trend = sorted(rows, key=lambda r: -(r["ccu"] + (20000 if r["appid"] in most_played else 0)
                                                  + (5000 if r["appid"] in two_weeks else 0)))[:150]
         # Steam's current top sellers always get considered (SteamSpy hasn't caught up with brand-new games)
