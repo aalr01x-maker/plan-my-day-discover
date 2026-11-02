@@ -638,10 +638,11 @@ def _posted_since(video: dict, cut) -> bool:
     return bool(up and up >= cut)
 
 
-def _renumber(cards: list[dict]) -> list[dict]:
+def _renumber(cards: list[dict], keep_why: bool = False) -> list[dict]:
     for i, c in enumerate(cards):
         c["rank"] = i + 1
-        c["why"] = f"Released {c['released']}; {c['metrics']['views']:,} views on YouTube."
+        if not keep_why:
+            c["why"] = f"Released {c['released']}; {c['metrics']['views']:,} views on YouTube."
     return cards
 
 
@@ -890,7 +891,8 @@ def build(yt: YouTube | None = None) -> dict:
                 t_rows.append({**x, "mom": m})
         max_m = max((x["mom"][0] for x in t_rows), default=1)
         max_t = max((x["yt"]["views"] for x in t_rows), default=1)
-        trending = top(t_rows, lambda x: x["mom"][0], n)   # views gained per week only (owner, 2 Nov 2026)
+        trending = top(t_rows, lambda x: x["mom"][0], n)
+        t_rows_sorted = top(t_rows, lambda x: x["mom"][0], 3 * n)   # extra, before the 12-month check   # views gained per week only (owner, 2 Nov 2026)
 
         def card(x: dict, rank: int, why: str) -> dict:
             apple = _itunes(x, state["itunes"], itunes_budget)
@@ -914,7 +916,11 @@ def build(yt: YouTube | None = None) -> dict:
             # Trending = released in the last 12 months by total views (with the minimum-views rule)
             "trending": _renumber([c for c in (card(x, 0, "") for x in recent) if (c["released"] or "") >= year_ago
                                    and c["metrics"]["views"] >= max(50_000, 0.02 * max((y["yt"]["views"] for y in recent), default=0))][:n]),
-            "recent": [card(x, i + 1, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.") for i, x in enumerate(trending)],
+            # Best Recent = weekly gain, but only songs released in the last 12 months: an old classic gaining
+            # views ("Scenario", 1991) is not a recent song
+            "recent": _renumber([c for c in (card(x, 0, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.")
+                                             for x in t_rows_sorted if (x.get("released") or "") >= year_ago)
+                                 if (c["released"] or "") >= year_ago][:n], keep_why=True),
         }
         notes = {}
         for k, lst in lists.items():
