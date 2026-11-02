@@ -566,7 +566,8 @@ def _youtube_recent(yt: YouTube, gid: str, name: str, after, key: str | None, ar
         if not an or not ch or not (an in ch or ch in an):
             continue
         tags = _artist_tags_lastfm(artist, key, artist_tags, tag_budget)
-        if tags is None or not re.search(FAMILY[gid], tags):
+        # the genre must be among the artist's top 5 tags (a stray tag lets Viking or pop acts in)
+        if tags is None or not re.search(FAMILY[gid], " | ".join(tags.split(" | ")[:5])):
             continue
         out.append({"title": song, "artist": artist, "album": None, "released": (v.get("published") or "")[:10] or None,
                     "cover": v.get("thumb"), "artist_youtube": None,
@@ -863,7 +864,9 @@ def build(yt: YouTube | None = None) -> dict:
                 return True
             tags = _artist_tags_lastfm(x["artist"], key, artist_tags, tag_budget)
             if tags is None:
-                return True   # unknown (no key or budget): keep the earlier checks' verdict
+                # unknown on Last.fm: YouTube-search finds ("Trap king", "Ragal Ironbull") stay out;
+                # database-sourced songs keep the earlier checks' verdict
+                return not str(x.get("mbid") or "").startswith("yt:")
             return bool(re.search(CORE_TAGS[gid], " | ".join(tags.split(" | ")[:5])))
 
         def top(rows, score, n=20):
