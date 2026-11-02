@@ -195,6 +195,35 @@ def _steam_reviews_many(appids: list[str], cache: dict) -> None:
         time.sleep(0.3)
 
 
+# Steam store tag ids per genre tab, for Steam's own "top sellers" list of that tag
+STEAM_TAG_IDS = {"all": None, "action": 19, "adventure": 21, "rpg": 122, "shooters": 1774, "open-world": 1695,
+                 "sandbox": 3810, "racing": 699, "sports": 701, "strategy": 9, "simulation": 599, "horror": 1667}
+
+
+def _steam_top_sellers(tag_id: int | None, cache: dict, pages: int = 2) -> list[str]:
+    """The top ~100 sellers on Steam for a tag (Steam's own store search), cached 1 day. Owner, 2 Nov 2026:
+    Sports Trending missed NBA 2K, FC, Madden, Football Manager -- the activity charts alone are too thin."""
+    k = str(tag_id)
+    hit = cache.get(k)
+    if hit and common.within(common.parse_time(hit["at"]), 24):
+        return hit["ids"]
+    ids: list[str] = []
+    for page in range(pages):
+        params = {"start": page * 50, "count": 50, "category1": 998, "filter": "topsellers", "infinite": 1,
+                  "cc": "us", "l": "english"}
+        if tag_id:
+            params["tags"] = tag_id
+        try:
+            html = (common.get("https://store.steampowered.com/search/results/", params=params) or {}).get("results_html") or ""
+        except (common.FetchError, ValueError):
+            break
+        ids += [i for i in re.findall(r'data-ds-appid="(\d+)"', html) if i not in ids]
+        time.sleep(1.0)
+    if ids:
+        cache[k] = {"at": common.iso(common.now_utc()), "ids": ids}
+    return ids or (hit["ids"] if hit else [])
+
+
 def _tags(appid: str, cache: dict, budget: list[int]) -> list[str] | None:
     """The game's top player tags (most votes first) and review numbers, cached 30 days, or 5 days
     for games with under 5,000 reviews (new games' review counts grow fast)."""
@@ -351,7 +380,8 @@ def build(yt: YouTube | None = None) -> dict:
         # SteamSpy's genre-list endpoint stopped answering (31 Oct 2026), so it isn't used;
         # RAWG supplies the genre lists for All-time and Recent.
         apps: dict[str, dict] = {}
-        for appid in set(most_played) | set(two_weeks):
+        sellers = _steam_top_sellers(STEAM_TAG_IDS.get(gid), state.setdefault("top_sellers", {}))
+        for appid in set(most_played) | set(two_weeks) | set(sellers):
             a = two_weeks.get(appid)
             if not a:
                 _tags(appid, state["tags"], tbudget)
