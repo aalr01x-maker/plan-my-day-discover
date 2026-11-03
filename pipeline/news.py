@@ -1,4 +1,4 @@
-"""Optimal News: Top 10 for World, Top 3 per region (plus a Business tab), Today (24 h), This Week (7 days) and
+"""Optimal News: Top 10 for World and Business, Top 3 per region, Today (24 h), This Week (7 days) and
 This Month (30 days). The month view also draws on every earlier daily ranking (saved in state),
 so stories that dominated two weeks ago still count after their articles drop out of the feeds.
 
@@ -302,7 +302,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             pool = [ev for ev in events if common.within(ev["latest"], window, now)
                     and (tab == "world" or (ev["business"] if tab == "business" else tab in ev["regions"]))]
             pool.sort(key=lambda e: _score(e, now, window), reverse=True)
-            for ev in pool[:15 if tab == "world" else 8]:   # World shows 10 (owner, 2 Nov 2026)
+            for ev in pool[:15 if tab in ("world", "business") else 8]:   # World + Business show 10 (owner, 2-3 Nov 2026)
                 ev["candidate"] = True
     _ai_enrich(events, ai)
 
@@ -365,8 +365,8 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                 break
         return picked
 
-    def size(tab: str) -> int:   # owner, 2 Nov 2026: World Top 10; every region and Business keep Top 3
-        return 10 if tab == "world" else 3
+    def size(tab: str) -> int:   # owner: World Top 10 (2 Nov), Business Top 10 (3 Nov); every region keeps Top 3
+        return 10 if tab in ("world", "business") else 3
 
     def in_tab(ev: dict, tab: str) -> bool:
         ai_row = ev.get("ai") or {}

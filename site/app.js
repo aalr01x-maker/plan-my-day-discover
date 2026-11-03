@@ -272,7 +272,7 @@ async function news(parts, q) {
   const tab = data.regions[parts[1]] ? parts[1] : "world";
   const period = ["week", "month"].includes(parts[2]) ? parts[2] : "today";
   tabsRow($("tabs"), tabs, tab, (id) => go(["news", id, period], null));
-  const periods = tab === "world" ? NEWS_PERIODS.map(([k, v]) => [k, v.replace("Top 3", "Top 10")]) : NEWS_PERIODS;   // World: Top 10 (owner, 2 Nov)
+  const periods = ["world", "business"].includes(tab) ? NEWS_PERIODS.map(([k, v]) => [k, v.replace("Top 3", "Top 10")]) : NEWS_PERIODS;   // World + Business: Top 10 (owner, 2-3 Nov)
   segGroups([{ label: "Period", items: periods, selected: period, onPick: (id) => go(["news", tab, id], null) }]);
   $("filters").innerHTML = "";
   heading("news", [data.regions[tab].name, label(periods, period)]);
