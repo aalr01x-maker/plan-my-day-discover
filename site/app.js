@@ -10,7 +10,13 @@ const SECTIONS = [
   { id: "sports", icon: "🏆", name: "Sports", file: "sports" },
 ];
 const RANKINGS = [["all_time", "Best of All Time"], ["recent", "Best Recent"], ["trending", "Trending"]];
-const NEWS_PERIODS = [["today", "Top 3 Today"], ["week", "Top 3 This Week"], ["month", "Top 3 This Month"]];
+// Owner, 3 Nov 2026: Top 10 on every News tab.
+const NEWS_PERIODS = [["today", "Top 10 Daily"], ["week", "Top 10 Weekly"], ["month", "Top 10 Monthly"]];
+// Topic tabs on the first row (no label), then World and the regions on the second (owner, 3 Nov 2026).
+const NEWS_TOPICS = ["business", "tech", "entertainment", "science", "health"];
+const NEWS_TOPIC_NOTES = { business: " about business, the economy, markets and companies", tech: " about technology, tech companies, AI and the internet",
+  entertainment: " about film, TV, music, celebrities and the arts", science: " about science, space, climate and discoveries",
+  health: " about health, medicine, diseases and health systems" };
 const SPORT_VIEWS = [["highlights", "Top Highlights"], ["results", "Major Results & Events"], ["latest", "Latest (24h)"]];
 const MEDIA = [["tv", "TV Shows"], ["movie", "Movies"]];   // TV first (owner, 1 Nov)
 const STALE_HOURS = 30;
@@ -87,8 +93,22 @@ function renderSections(active) {
     `<a class="sec" href="${esc(store.get("last:" + s.id) || "#/" + s.id)}" ${s.id === active ? 'aria-current="page"' : ""}>${s.icon} ${esc(s.name)}</a>`).join("");
 }
 function tabsRow(el, items, selected, onPick, role = "tab") {
+  el.classList.remove("tabs--rows");
   el.innerHTML = items.map(([id, label]) =>
     `<button class="${role === "tab" ? "tab" : "seg"}" role="tab" aria-selected="${id === selected}" data-id="${esc(id)}">${esc(label)}</button>`).join("");
+  el.onclick = (e) => {
+    const b = e.target.closest("button[data-id]");
+    if (!b || wasDrag(e)) return;
+    onPick(b.dataset.id);
+  };
+  const sel = el.querySelector('[aria-selected="true"]');
+  if (sel) sel.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+// Several rows of tabs in one tab bar (News: topics, then World + regions).
+function tabsRows(el, rows, selected, onPick) {
+  el.classList.add("tabs--rows");
+  el.innerHTML = rows.filter((r) => r.length).map((items) => `<div class="tabrow" role="tablist">` + items.map(([id, label]) =>
+    `<button class="tab" role="tab" aria-selected="${id === selected}" data-id="${esc(id)}">${esc(label)}</button>`).join("") + `</div>`).join("");
   el.onclick = (e) => {
     const b = e.target.closest("button[data-id]");
     if (!b || wasDrag(e)) return;
@@ -157,6 +177,18 @@ const label = (pairs, id) => (pairs.find(([k]) => k === id) || [, ""])[1];
 function skeleton(n = 6) { $("content").innerHTML = Array.from({ length: n }, () => '<div class="skeleton"></div>').join(""); }
 function empty(text) { $("content").innerHTML = `<p class="empty">${esc(text)}</p>`; }
 
+// Every section updates together once a day, live by 12:00 noon Kuwait (09:00 UTC); the run starts
+// about 10:30 Kuwait (07:30 UTC). Shown under "Updated" (owner, 3 Nov 2026).
+function nextUpdateText(updatedAt) {
+  const now = new Date();
+  const todayNoon = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 9, 0));
+  const todayStart = new Date(todayNoon.getTime() - 90 * 60 * 1000);
+  const doneToday = updatedAt && new Date(updatedAt) >= todayStart;
+  if (now >= todayNoon && !doneToday) return "Next update: any minute now (today's is running late)";
+  const next = now < todayNoon ? todayNoon : new Date(todayNoon.getTime() + 24 * 3600 * 1000);
+  return `Next update: ${kuwait(next.toISOString())} (${tzLabel()})`;
+}
+
 let meta = null;
 async function showMeta(section) {
   try { meta = meta || await load("meta"); } catch { meta = { sections: {} }; }
@@ -164,6 +196,8 @@ async function showMeta(section) {
   const m = meta.sections?.[file];
   const u = $("updated");
   u.textContent = m?.updated_at ? `Updated ${kuwait(m.updated_at)} (${tzLabel()})` : "";
+  const nx = nextUpdateText(m?.updated_at);
+  if (nx) { u.appendChild(document.createElement("br")); u.appendChild(document.createTextNode(nx)); }
   locationBanner();
   const st = $("stale");
   const old = m?.updated_at && (Date.now() - new Date(m.updated_at)) / 36e5 > STALE_HOURS;
@@ -271,14 +305,16 @@ async function news(parts, q) {
   const tabs = Object.entries(data.regions).map(([id, r]) => [id, r.name]);
   const tab = data.regions[parts[1]] ? parts[1] : "world";
   const period = ["week", "month"].includes(parts[2]) ? parts[2] : "today";
-  tabsRow($("tabs"), tabs, tab, (id) => go(["news", id, period], null));
-  const periods = ["world", "business"].includes(tab) ? NEWS_PERIODS.map(([k, v]) => [k, v.replace("Top 3", "Top 10")]) : NEWS_PERIODS;   // World + Business: Top 10 (owner, 2-3 Nov)
+  const topicRow = NEWS_TOPICS.filter((id) => data.regions[id]).map((id) => [id, data.regions[id].name]);
+  const placeRow = tabs.filter(([id]) => !NEWS_TOPICS.includes(id)).sort(([a], [b]) => (a === "world" ? -1 : b === "world" ? 1 : 0));
+  tabsRows($("tabs"), [topicRow, placeRow], tab, (id) => go(["news", id, period], null));
+  const periods = NEWS_PERIODS;
   segGroups([{ label: "Period", items: periods, selected: period, onPick: (id) => go(["news", tab, id], null) }]);
   $("filters").innerHTML = "";
   heading("news", [data.regions[tab].name, label(periods, period)]);
   note(`${data.regions[tab].name} stories from the ${{ today: "last 24 hours", week: "last 7 days", month: "last 30 days" }[period]}` +
-    (tab === "business" ? " about business, the economy, markets and companies" : tab === "world" ? " from every region" : "") +
-    (period === "month" ? ", ranked by how many outlets covered it (40%), significance (35%), source reliability (15%) and recency (10%). " :
+    (NEWS_TOPIC_NOTES[tab] || (tab === "world" ? " from every region" : "")) +
+    (period === "month" ? ", ranked by how many outlets covered it (30%), significance (30%), how many days it stayed in the news (20%), source reliability (15%) and recency (5%). " :
       `, ranked by outlets confirming it, significance, recency and source reliability. `) +
     `${num(data.article_count)} articles from ${data.outlets.length} outlets were compared today.`);
   paint(data.regions[tab][period], newsCard, newsDetail, "No major stories in this window yet.");

@@ -1,4 +1,4 @@
-"""Optimal News: Top 10 for World and Business, Top 3 per region, Today (24 h), This Week (7 days) and
+"""Optimal News: Top 10 on every tab -- five topics (Business, Tech, Entertainment, Science, Health), World and seven regions; Today (24 h), This Week (7 days) and
 This Month (30 days). The month view also draws on every earlier daily ranking (saved in state),
 so stories that dominated two weeks ago still count after their articles drop out of the feeds.
 
@@ -19,6 +19,7 @@ significance; every fact shown comes from the linked articles.
 from __future__ import annotations
 
 import math
+import re
 from datetime import timedelta
 
 import feedparser
@@ -45,20 +46,76 @@ FEEDS = [
     ("RNZ", "https://www.rnz.co.nz/rss/pacific.xml", "oceania"),
     ("The Guardian", "https://www.theguardian.com/australia-news/rss", "oceania"),
 ]
-# Business tab (owner, 31 Oct 2026): a topic tab beside the regions, same ranking rules.
-BUSINESS_FEEDS = [
-    ("BBC News", "https://feeds.bbci.co.uk/news/business/rss.xml"),
-    ("DW", "https://rss.dw.com/rdf/rss-en-bus"),
-    ("France 24", "https://www.france24.com/en/business-tech/rss"),
-    ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html"),
-]
-BUSINESS_QUERY = "(business OR markets OR economy OR earnings OR inflation)"
-BUSINESS_WORDS = set(("economy economic markets market stocks shares earnings profit revenue inflation interest rates "
-                      "central bank fed ecb tariffs trade merger acquisition takeover deal bankruptcy layoffs jobs gdp "
-                      "recession oil prices investors ipo company companies ceo bank banks currency dollar bond bonds").split())
+# Topic tabs (owner: Business 31 Oct 2026; Tech, Entertainment, Science, Health 3 Nov 2026 -- the
+# Google News topic sections). Same ranking rules as the regions. Each topic gets its own desk feeds
+# from the trusted outlets plus a Google News search limited to those outlets (Google News' own
+# topic sections are mostly other sites, so they are not used directly).
+TOPICS = {
+    "business": {
+        "name": "Business",
+        "feeds": [("BBC News", "https://feeds.bbci.co.uk/news/business/rss.xml"),
+                  ("DW", "https://rss.dw.com/rdf/rss-en-bus"),
+                  ("France 24", "https://www.france24.com/en/business-tech/rss"),
+                  ("CNBC", "https://www.cnbc.com/id/100003114/device/rss/rss.html")],
+        "query": "(business OR markets OR economy OR earnings OR inflation)",
+        "words": "economy economic markets market stocks shares earnings profit revenue inflation interest rates "
+                 "central bank fed ecb tariffs trade merger acquisition takeover deal bankruptcy layoffs jobs gdp "
+                 "recession oil prices investors ipo company companies ceo bank banks currency dollar bond bonds",
+        "ai": "the main angle is business, the economy, markets, trade, companies or finance (wars, arms sales, "
+              "diplomacy and politics are false unless the story is about their economic or market effect)",
+    },
+    "tech": {
+        "name": "Tech",
+        "feeds": [("BBC News", "https://feeds.bbci.co.uk/news/technology/rss.xml"),
+                  ("CNBC", "https://www.cnbc.com/id/19854910/device/rss/rss.html"),
+                  ("The Guardian", "https://www.theguardian.com/uk/technology/rss")],
+        "query": "(technology OR AI OR software OR smartphone OR cybersecurity OR chips OR apple OR google OR microsoft)",
+        "words": "technology tech ai artificial intelligence software app apps smartphone smartphones iphone android "
+                 "apple google microsoft meta amazon openai chatgpt chip chips semiconductor semiconductors nvidia cyber "
+                 "cyberattack hack hacked hackers data internet startup robot robots robotics chatbot computing cloud "
+                 "quantum spacex social media platform platforms online gadget",
+        "ai": "the main subject is technology: tech companies and products, AI, software, gadgets, the internet, "
+              "cybersecurity or social media platforms",
+    },
+    "entertainment": {
+        "name": "Entertainment",
+        "feeds": [("BBC News", "https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml"),
+                  ("DW", "https://rss.dw.com/rdf/rss-en-cul"),
+                  ("The Guardian", "https://www.theguardian.com/culture/rss")],
+        "query": "(film OR movie OR music OR celebrity OR television OR streaming OR \"box office\")",
+        "words": "film films movie movies actor actress director music singer album song songs band concert tour "
+                 "celebrity hollywood oscar oscars grammy grammys emmy emmys television tv series netflix disney "
+                 "streaming box office festival award awards star rapper comedian theatre broadway musician",
+        "ai": "the main subject is entertainment or culture: film, TV, music, celebrities, streaming, arts or awards",
+    },
+    "science": {
+        "name": "Science",
+        "feeds": [("BBC News", "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"),
+                  ("The Guardian", "https://www.theguardian.com/science/rss"),
+                  ("DW", "https://rss.dw.com/rdf/rss-en-sci")],
+        "query": "(science OR scientists OR space OR NASA OR climate OR researchers OR study)",
+        "words": "science scientists scientific research researchers study studies space nasa astronaut astronauts "
+                 "rocket moon mars planet planets telescope climate species fossil fossils discovery physics biology "
+                 "experiment universe galaxy asteroid satellite ocean environment environmental archaeologists dinosaur",
+        "ai": "the main subject is science: research findings, space, climate and environment science, nature or discoveries",
+    },
+    "health": {
+        "name": "Health",
+        "feeds": [("BBC News", "https://feeds.bbci.co.uk/news/health/rss.xml"),
+                  ("The Guardian", "https://www.theguardian.com/society/health/rss")],
+        "query": "(health OR disease OR vaccine OR hospital OR medical OR WHO OR outbreak)",
+        "words": "health medical medicine doctors doctor hospital hospitals patients disease diseases virus vaccine "
+                 "vaccines cancer drug drugs treatment nhs outbreak covid flu mental obesity diabetes surgery clinical "
+                 "trial heart dementia nurses healthcare infection infections",
+        "ai": "the main subject is health or medicine: diseases, outbreaks, treatments, health systems, public or mental health",
+    },
+}
+TOPIC_WORDS = {t: set(v["words"].split()) for t, v in TOPICS.items()}
+TOPIC_SITES = "(site:reuters.com OR site:apnews.com OR site:bbc.com OR site:theguardian.com OR site:cnbc.com)"
 WAR_WORDS = set("war missile missiles strikes troops drone drones killed attack military army".split())
-TABS = ["world", "business"] + [r for r in geo.REGIONS if r != "world"]
-TAB_NAMES = {**geo.REGION_NAMES, "business": "Business"}
+# Tab order (owner, 3 Nov 2026): the five topics, then World, then the regions.
+TABS = list(TOPICS) + ["world"] + [r for r in geo.REGIONS if r != "world"]
+TAB_NAMES = {**geo.REGION_NAMES, **{t: v["name"] for t, v in TOPICS.items()}}
 # Reuters and AP through Google News search feeds (title links go via Google News).
 GNEWS = "https://news.google.com/rss/search?hl=en-US&gl=US&ceid=US:en&q="
 WIRE_QUERIES = {
@@ -66,7 +123,8 @@ WIRE_QUERIES = {
     "south-america": "(Brazil OR Argentina OR Colombia OR Venezuela OR Chile OR Peru)", "middle-east": "Middle East",
     "europe": "Europe", "oceania": "(Australia OR New Zealand OR Pacific)",
 }
-WIRES = {"reuters.com": "Reuters", "apnews.com": "AP"}
+WIRES = {"reuters.com": "Reuters", "apnews.com": "AP", "bbc.com": "BBC News", "bbc.co.uk": "BBC News",
+         "theguardian.com": "The Guardian", "cnbc.com": "CNBC"}
 TIER = {"Reuters": 1.0, "AP": 1.0, "BBC News": 0.95, "Al Jazeera": 0.85, "DW": 0.85, "France 24": 0.85, "CNBC": 0.85,
         "ABC News (Australia)": 0.9, "RNZ": 0.9, "The Guardian": 0.85}
 
@@ -88,25 +146,36 @@ SOFT = ("celebrity actor actress singer fashion royal wedding viral quiz recipe 
         "transfer").split()
 
 
+# Opinion columns, reviews, podcasts and quizzes are not news events (topic desks carry many).
+NOT_NEWS_URL = ("/commentisfree/", "/podcasts/", "/podcast/", "/news/av/", "/sounds/")
+NOT_NEWS_TITLE = re.compile(r"(\u2013|-|:)\s*(podcast|review|quiz)\b|\breview\s*(\u2013|-|:)|\b(podcast|quiz of the week|a job that changed me|"
+                            r"my week|what i'm really thinking|opinion)\b", re.I)
+
+
+def _not_news(title: str, url: str) -> bool:
+    return any(p in url for p in NOT_NEWS_URL) or bool(NOT_NEWS_TITLE.search(title))
+
+
 def _collect() -> list[dict]:
     items = []
     # Search feeds are not a reliable region label (an "Australia" search also returns
     # other stories), so only BBC's regional feeds count as a region source.
-    feeds = [(o, u, r, False) for o, u, r in FEEDS]
-    feeds += [(None, GNEWS + f"(site:reuters.com OR site:apnews.com) {q} when:7d", None, False)
+    feeds = [(o, u, r, None) for o, u, r in FEEDS]
+    feeds += [(None, GNEWS + f"(site:reuters.com OR site:apnews.com) {q} when:7d", None, None)
               for q in WIRE_QUERIES.values()]
     # the three weeks before that, one search per week, so This Month sees the whole month
     today = common.now_utc().date()
     for k in range(1, 4):
         after, before = today - timedelta(days=7 * k + 7), today - timedelta(days=7 * k)
-        feeds += [(None, GNEWS + f"(site:reuters.com OR site:apnews.com) {q} after:{after} before:{before}", None, False)
+        feeds += [(None, GNEWS + f"(site:reuters.com OR site:apnews.com) {q} after:{after} before:{before}", None, None)
                   for q in WIRE_QUERIES.values()]
-    feeds += [(o, u, None, True) for o, u in BUSINESS_FEEDS]
-    feeds.append((None, GNEWS + f"(site:reuters.com OR site:apnews.com) {BUSINESS_QUERY} when:30d", None, True))
-    for k in range(1, 4):
-        after, before = today - timedelta(days=7 * k + 7), today - timedelta(days=7 * k)
-        feeds.append((None, GNEWS + f"(site:reuters.com OR site:apnews.com) {BUSINESS_QUERY} after:{after} before:{before}", None, True))
-    for outlet, url, region, business in feeds:
+    for topic, t in TOPICS.items():
+        feeds += [(o, u, None, topic) for o, u in t["feeds"]]
+        feeds.append((None, GNEWS + f"{TOPIC_SITES} {t['query']} when:7d", None, topic))
+        for k in range(1, 4):
+            after, before = today - timedelta(days=7 * k + 7), today - timedelta(days=7 * k)
+            feeds.append((None, GNEWS + f"{TOPIC_SITES} {t['query']} after:{after} before:{before}", None, topic))
+    for outlet, url, region, topic in feeds:
         try:
             parsed = feedparser.parse(common.get(url, as_json=False))
         except common.FetchError as exc:
@@ -125,6 +194,8 @@ def _collect() -> list[dict]:
             published = common.parse_time(e.get("published_parsed") or e.get("updated_parsed") or e.get("published"))
             if not title or not link or not published:
                 continue
+            if _not_news(title, link):
+                continue
             image = None
             for key in ("media_thumbnail", "media_content"):
                 media = e.get(key) or []
@@ -139,7 +210,7 @@ def _collect() -> list[dict]:
                 "source": source,
                 "published": published,
                 "feed_region": region,
-                "business_feed": business,
+                "topic_feed": topic,
                 "image": image,
             })
     common.log(f"news: {len(items)} articles from {len({i['source'] for i in items})} outlets")
@@ -176,10 +247,11 @@ def _cluster(items: list[dict]) -> list[dict]:
         # BBC regional feeds also carry other regions' top stories: the headline's place wins.
         ev["regions"] = guessed[:1] or labelled[:1]
         words = set(common.norm(text).split())
-        # Business: carried by a business desk, or clearly about the economy / companies.
-        # (CNBC's and others' business desks also carry general headlines, so the text must agree.)
-        hits = len(words & BUSINESS_WORDS) - len(words & WAR_WORDS)
-        ev["business"] = hits >= (2 if any(a["business_feed"] for a in arts) else 4)
+        # Topics: carried by that topic's desk, or clearly about the topic (desks also carry
+        # general headlines, so the text must agree).
+        war = len(words & WAR_WORDS)
+        ev["topics"] = {t: len(words & TOPIC_WORDS[t]) - war >= (2 if any(a["topic_feed"] == t for a in arts) else 4)
+                        for t in TOPICS}
         severe = sum(1 for w in SEVERE if w in words)
         soft = sum(1 for w in SOFT if w in words)
         ev["keyword_severity"] = max(0.0, min(1.0, severe / 4 - soft / 4))
@@ -199,9 +271,8 @@ AI_SYSTEM = (
     "(local, human-interest, entertainment, sport); is_update: true if it is a new development of an ongoing story; "
     "disputed: a short note if the snippets present claims as unverified or contested, else empty string; story: a "
     "3-6 word lowercase label of the underlying story, IDENTICAL for events in this batch that are the same story "
-    "(e.g. 'spain train crash minister'); business: true only if the main angle is business, the economy, "
-    "markets, trade, companies or finance (wars, arms sales, diplomacy and politics are false unless the story is "
-    "about their economic or market effect). Keep each summary under 45 words."
+    "(e.g. 'spain train crash minister'); and one true/false per topic, true only if " +
+    "; ".join(f"{t}: {v['ai']}" for t, v in TOPICS.items()) + ". Keep each summary under 45 words."
 )
 AI_SCHEMA = {
     "type": "object",
@@ -212,9 +283,9 @@ AI_SCHEMA = {
             "region": {"type": "string", "enum": geo.REGIONS},
             "significance": {"type": "string", "enum": ["major", "notable", "minor"]},
             "is_update": {"type": "boolean"}, "disputed": {"type": "string"},
-            "story": {"type": "string"}, "business": {"type": "boolean"},
+            "story": {"type": "string"}, **{t: {"type": "boolean"} for t in TOPICS},
         },
-        "required": ["id", "summary", "country", "region", "significance", "is_update", "disputed", "story", "business"],
+        "required": ["id", "summary", "country", "region", "significance", "is_update", "disputed", "story", *TOPICS],
         "additionalProperties": False,
     }}},
     "required": ["events"], "additionalProperties": False,
@@ -232,7 +303,7 @@ def _ai_enrich(events: list[dict], ai) -> None:
             arts = sorted(ev["articles"], key=lambda a: -TIER.get(a["source"], 0.5))[:4]
             snippets = " || ".join(f"[{a['source']}] {a['title']}: {a['summary'][:260]}" for a in arts)
             lines.append(f"id={ev['id']} :: {snippets}")
-        key = "news:" + common.fingerprint(*lines)
+        key = "news-topics:" + common.fingerprint(*lines)  # new key: rows now carry every topic
         result = ai.json_call(key, AI_SYSTEM, "\n".join(lines), AI_SCHEMA, max_tokens=5000) if ai else None
         for row in (result or {}).get("events", []):
             ev = next((e for e in batch if e["id"] == row["id"]), None)
@@ -300,9 +371,9 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
     for window in (24, 168, 720):
         for tab in TABS:
             pool = [ev for ev in events if common.within(ev["latest"], window, now)
-                    and (tab == "world" or (ev["business"] if tab == "business" else tab in ev["regions"]))]
+                    and (tab == "world" or (ev["topics"][tab] if tab in TOPICS else tab in ev["regions"]))]
             pool.sort(key=lambda e: _score(e, now, window), reverse=True)
-            for ev in pool[:15 if tab in ("world", "business") else 8]:   # World + Business show 10 (owner, 2-3 Nov 2026)
+            for ev in pool[:15]:   # every tab shows 10 (owner, 3 Nov 2026)
                 ev["candidate"] = True
     _ai_enrich(events, ai)
 
@@ -365,15 +436,15 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                 break
         return picked
 
-    def size(tab: str) -> int:   # owner: World Top 10 (2 Nov), Business Top 10 (3 Nov); every region keeps Top 3
-        return 10 if tab in ("world", "business") else 3
+    def size(tab: str) -> int:   # owner, 3 Nov 2026: Top 10 on every tab (topics, World and regions)
+        return 10
 
     def in_tab(ev: dict, tab: str) -> bool:
         ai_row = ev.get("ai") or {}
         if tab == "world":
             return True
-        if tab == "business":  # the AI's judgement wins once it has seen the event
-            return ai_row["business"] if "business" in ai_row else ev["business"]
+        if tab in TOPICS:  # the AI's judgement wins once it has seen the event
+            return ai_row[tab] if tab in ai_row else ev["topics"][tab]
         if ai_row.get("region"):
             return tab == ai_row["region"]
         return tab in ev["regions"]
@@ -405,8 +476,9 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
         "choose the 3 most significant: lasting impact, scale (lives, countries, economies affected), and importance "
         "beyond the day. Prefer reported events (disasters, conflicts, elections, deaths, major decisions) over opinion, "
         "analysis or commentary pieces, and over routine forecasts, previews or minor incidents. The 3 picks must be "
-        "3 different stories, not two developments of the same story. For a Business "
-        "section only choose stories that are mainly about business, markets or the economy. Use only the given text. "
+        "3 different stories, not two developments of the same story. For a topic section (Business, Tech, "
+        "Entertainment, Science or Health) only choose stories that are mainly about that topic, and judge significance "
+        "within the topic. Use only the given text. "
         "Return the ids of your 3 picks, most significant first.")
     MONTH_SCHEMA = {"type": "object", "properties": {"picks": {"type": "array", "items": {"type": "string"}}},
                     "required": ["picks"], "additionalProperties": False}
@@ -471,7 +543,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             if label == "today" and len(picked) < n:
                 # a quiet day for this region: fill Today with its most recent stories (dated on the card)
                 older = sorted((ev for ev in events if in_tab(ev, region) and ev not in picked
-                                and common.within(ev["latest"], 72, now)), key=lambda e: e["latest"], reverse=True)
+                                and common.within(ev["latest"], 168, now)), key=lambda e: e["latest"], reverse=True)   # up to 7 days so every list reaches 10
                 for ev in older:
                     if len(picked) >= n:
                         break
