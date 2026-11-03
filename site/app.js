@@ -29,6 +29,18 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
 };
 
+// Owner, 3 Nov 2026: every fresh open starts on the default views (News World Top 10 Daily; Movies & TV
+// alternates TV Shows / Movies per open; Gaming and Music All, Best of All Time; Sports Upcoming, all
+// leagues). Views picked during a visit are remembered only for that visit, never across opens.
+const lastView = {};
+try { Object.keys(localStorage).filter((k) => k.startsWith("last:")).forEach((k) => localStorage.removeItem(k)); } catch { /* blocked */ }
+const firstMedia = (() => {
+  const next = store.get("mediaNext") === "movie" ? "movie" : "tv";
+  store.set("mediaNext", next === "tv" ? "movie" : "tv");
+  return next;
+})();
+if (!/[?&]item=/.test(location.hash) && location.hash && location.hash !== "#/news") history.replaceState(null, "", "#/news");
+
 /* ---------- data ---------- */
 const cache = {};
 function load(file) {
@@ -91,7 +103,7 @@ const wasDrag = (e) => Math.abs(e.clientX - downX) > 8 || Math.abs(e.clientY - d
 /* ---------- shell ---------- */
 function renderSections(active) {
   $("sections").innerHTML = SECTIONS.map((s) =>
-    `<a class="sec" href="${esc(store.get("last:" + s.id) || "#/" + s.id)}" ${s.id === active ? 'aria-current="page"' : ""}>${s.icon} ${esc(s.name)}</a>`).join("");
+    `<a class="sec" href="${esc(lastView[s.id] || "#/" + s.id)}" ${s.id === active ? 'aria-current="page"' : ""}>${s.icon} ${esc(s.name)}</a>`).join("");
 }
 function tabsRow(el, items, selected, onPick, role = "tab") {
   el.classList.remove("tabs--rows");
@@ -344,7 +356,7 @@ function newsDetail(s) {
 /* ---------- Movies & TV ---------- */
 async function movies(parts) {
   const data = await load("movies");
-  const media = parts[1] === "movie" ? "movie" : "tv";   // TV Shows opens by default
+  const media = parts[1] === "movie" || parts[1] === "tv" ? parts[1] : firstMedia;   // alternates per open (owner, 3 Nov)
   const set = media === "tv" ? data.tv : data.movies;
   const tabs = Object.entries(set).map(([id, t]) => [id, t.name]);
   const genre = set[parts[2]] ? parts[2] : tabs[0]?.[0];
@@ -484,7 +496,7 @@ async function sports(parts, q) {
   if (up && (parts[1] === "upcoming" || !parts[1])) return upcomingView(up, tabs, q);
   const sport = data.sports[parts[1]] ? parts[1] : tabs[0]?.[0];
   const s = data.sports[sport];
-  let view = SPORT_VIEWS.some(([v]) => v === parts[2]) ? parts[2] : (s.highlights.length ? "highlights" : "results");
+  let view = SPORT_VIEWS.some(([v]) => v === parts[2]) ? parts[2] : "highlights";   // always first (owner, 3 Nov)
   const league = q.get("league") || "";
   const lq = (l) => { const n = new URLSearchParams(); if (l) n.set("league", l); return n; };
   tabsRow($("tabs"), tabs, sport, (id) => go(["sports", id], null));
@@ -631,7 +643,7 @@ async function route() {
       if (section !== "search" && canonical) {
         const want = href(canonical.filter(Boolean), listQ);
         if (!item && location.hash !== want) history.replaceState(null, "", want);
-        store.set("last:" + section, want);
+        lastView[section] = want;
         lastListKey = section + "|" + canonical.filter(Boolean).join("/") + "|" + listQ.toString();
       }
     } catch (e) {
