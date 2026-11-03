@@ -379,6 +379,15 @@ def _distinct_first(articles: list[dict]) -> list[dict]:
     return first + rest
 
 
+def _maybe_topic(ev: dict, topic: str) -> bool:
+    """Wide net for the AI: carried by the topic's feeds or naming one topic word (short summaries
+    often name only one, e.g. 'Flash flooding triggers evacuations'). The AI then decides."""
+    if ev["topics"][topic] or any(a["topic_feed"] == topic for a in ev["articles"]):
+        return True
+    words = set(common.norm(" ".join(a["title"] + " " + a["summary"] for a in ev["articles"])).split())
+    return bool(words & TOPIC_WORDS[topic])
+
+
 def build(ai=None, yt: YouTube | None = None) -> dict:
     now = common.now_utc()
     items = [i for i in _collect() if common.within(i["published"], 30 * 24, now)]
@@ -390,11 +399,11 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
     for window in (24, 168, 720):
         for tab in TABS:
             pool = [ev for ev in events if common.within(ev["latest"], window, now)
-                    and (tab == "world" or (ev["topics"][tab] if tab in TOPICS else tab in ev["regions"]))]
+                    and (tab == "world" or (_maybe_topic(ev, tab) if tab in TOPICS else tab in ev["regions"]))]
             pool.sort(key=lambda e: _score(e, now, window), reverse=True)
             # every tab shows 10 (owner, 3 Nov 2026). The biggest stories overall also go to the AI, which
             # decides each story's categories itself -- keywords only widen the net, they never decide.
-            for ev in pool[:40 if tab == "world" else 15]:
+            for ev in pool[:40 if tab == "world" else 30 if tab in TOPICS else 15]:
                 ev["candidate"] = True
     _ai_enrich(events, ai)
 
