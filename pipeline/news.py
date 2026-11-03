@@ -291,7 +291,10 @@ AI_SYSTEM = (
     "3-6 word lowercase label of the underlying story, IDENTICAL for events in this batch that are the same story "
     "(e.g. 'spain train crash minister'); and one true/false per news category -- judge from what the story is "
     "mainly about, not from keywords; a story can belong to several categories or none; true only if " +
-    "; ".join(f"{t}: {v['ai']}" for t, v in TOPICS.items()) + ". Keep each summary under 45 words."
+    "; ".join(f"{t}: {v['ai']}" for t, v in TOPICS.items()) + ". For every category you mark true, <category>_why: "
+    "if a reader could wonder why the story is in that category (the link is indirect, e.g. a company's earnings "
+    "in Health because a food outbreak hurt them), one short plain sentence under 20 words saying why it belongs; "
+    "else empty string. Keep each summary under 45 words."
 )
 AI_SCHEMA = {
     "type": "object",
@@ -303,8 +306,10 @@ AI_SCHEMA = {
             "significance": {"type": "string", "enum": ["major", "notable", "minor"]},
             "is_update": {"type": "boolean"}, "disputed": {"type": "string"},
             "story": {"type": "string"}, **{t: {"type": "boolean"} for t in TOPICS},
+            **{t + "_why": {"type": "string"} for t in TOPICS},
         },
-        "required": ["id", "summary", "country", "region", "significance", "is_update", "disputed", "story", *TOPICS],
+        "required": ["id", "summary", "country", "region", "significance", "is_update", "disputed", "story", *TOPICS,
+                     *(t + "_why" for t in TOPICS)],
         "additionalProperties": False,
     }}},
     "required": ["events"], "additionalProperties": False,
@@ -322,7 +327,7 @@ def _ai_enrich(events: list[dict], ai) -> None:
             arts = sorted(ev["articles"], key=lambda a: -TIER.get(a["source"], 0.5))[:4]
             snippets = " || ".join(f"[{a['source']}] {a['title']}: {a['summary'][:260]}" for a in arts)
             lines.append(f"id={ev['id']} :: {snippets}")
-        key = "news-topics2:" + common.fingerprint(*lines)  # new key: rows carry every topic, incl. climate
+        key = "news-topics3:" + common.fingerprint(*lines)  # new key: rows carry every topic + <topic>_why notes
         result = ai.json_call(key, AI_SYSTEM, "\n".join(lines), AI_SCHEMA, max_tokens=5000) if ai else None
         for row in (result or {}).get("events", []):
             ev = next((e for e in batch if e["id"] == row["id"]), None)
@@ -411,6 +416,13 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
     if yt and yt.available:
         for name, cid in NEWS_CHANNELS.items():
             videos += yt.uploads(cid)
+
+    def with_note(c: dict, note: str) -> dict:
+        """Owner, 3 Nov 2026: when a story's place in a topic tab isn't obvious, the Why line says why."""
+        return {**c, "why": f"{c['why']} {note.rstrip('.')}."} if note else c
+
+    def note_for(ev: dict, tab: str) -> str:
+        return ((ev.get("ai") or {}).get(tab + "_why") or "").strip() if tab in TOPICS else ""
 
     def card(ev: dict, window: float) -> dict:
         lead = ev["lead"]
@@ -551,9 +563,10 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
         out = []
         for item in picked:
             if "parts" in item:
-                out.append({**item["card"], "score": _score_parts(item["parts"], now, 720), "older": False})
+                out.append(with_note({**item["card"], "score": _score_parts(item["parts"], now, 720), "older": False},
+                                     (item.get("notes") or {}).get(region, "")))
             else:
-                out.append({**card(item, 720), "older": False})
+                out.append(with_note({**card(item, 720), "older": False}, note_for(item, region)))
         return out
 
     regions = {}
@@ -580,8 +593,8 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                     if not any(same_story(ev, p) for p in picked):
                         picked.append(ev)
                         ev["_older"] = True
-            out[label] = [{**card(ev, window), "older": bool(ev.get("_older")) and not common.within(ev["latest"], 24, now)}
-                          for ev in picked]
+            out[label] = [with_note({**card(ev, window), "older": bool(ev.get("_older")) and not common.within(ev["latest"], 24, now)},
+                                    note_for(ev, region)) for ev in picked]
         out["month"] = month_top3(region)
         regions[region] = {"name": TAB_NAMES[region], **out}
         # save this region's 10 strongest stories of the week for future month rankings
@@ -591,6 +604,8 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             entry = new_archive.get(ev["id"]) or {"tabs": []}
             entry.update(card=card(ev, 168), parts=_parts(ev), story=(ev.get("ai") or {}).get("story") or "")
             entry["tabs"] = sorted(set(entry["tabs"]) | {region})
+            if note_for(ev, region):
+                entry["notes"] = {**(entry.get("notes") or {}), region: note_for(ev, region)}
             new_archive[ev["id"]] = entry
     common.save_json(ARCHIVE, new_archive)
     return {"regions": regions, "article_count": len(items), "event_count": len(events),
