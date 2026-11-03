@@ -1,4 +1,4 @@
-"""Optimal News: Top 10 on every tab -- five topics (Business, Tech, Entertainment, Science, Health), World and seven regions; Today (24 h), This Week (7 days) and
+"""Optimal News: Top 10 on every tab -- six topics (Business, Tech, Entertainment, Science, Health, Climate & Weather), World and seven regions; Today (24 h), This Week (7 days) and
 This Month (30 days). The month view also draws on every earlier daily ranking (saved in state),
 so stories that dominated two weeks ago still count after their articles drop out of the feeds.
 
@@ -61,8 +61,8 @@ TOPICS = {
         "words": "economy economic markets market stocks shares earnings profit revenue inflation interest rates "
                  "central bank fed ecb tariffs trade merger acquisition takeover deal bankruptcy layoffs jobs gdp "
                  "recession oil prices investors ipo company companies ceo bank banks currency dollar bond bonds",
-        "ai": "the main angle is business, the economy, markets, trade, companies or finance (wars, arms sales, "
-              "diplomacy and politics are false unless the story is about their economic or market effect)",
+        "ai": "the story is mainly about business, the economy, markets, trade, companies or finance (wars, arms "
+              "sales, diplomacy and politics are false unless the story is about their economic or market effect)",
     },
     "tech": {
         "name": "Tech",
@@ -74,8 +74,8 @@ TOPICS = {
                  "apple google microsoft meta amazon openai chatgpt chip chips semiconductor semiconductors nvidia cyber "
                  "cyberattack hack hacked hackers data internet startup robot robots robotics chatbot computing cloud "
                  "quantum spacex social media platform platforms online gadget",
-        "ai": "the main subject is technology: tech companies and products, AI, software, gadgets, the internet, "
-              "cybersecurity or social media platforms",
+        "ai": "the story is mainly about technology in any form (tech companies, products, AI, software, the "
+              "internet, cybersecurity, platforms and more)",
     },
     "entertainment": {
         "name": "Entertainment",
@@ -86,18 +86,22 @@ TOPICS = {
         "words": "film films movie movies actor actress director music singer album song songs band concert tour "
                  "celebrity hollywood oscar oscars grammy grammys emmy emmys television tv series netflix disney "
                  "streaming box office festival award awards star rapper comedian theatre broadway musician",
-        "ai": "the main subject is entertainment or culture: film, TV, music, celebrities, streaming, arts or awards",
+        "ai": "the story is mainly about entertainment or culture in any form (film, TV, music, celebrities, "
+              "streaming, the arts, awards and more)",
     },
     "science": {
         "name": "Science",
         "feeds": [("BBC News", "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"),
                   ("The Guardian", "https://www.theguardian.com/science/rss"),
                   ("DW", "https://rss.dw.com/rdf/rss-en-sci")],
-        "query": "(science OR scientists OR space OR NASA OR climate OR researchers OR study)",
+        "query": "(science OR scientists OR space OR NASA OR physics OR researchers OR discovery)",
         "words": "science scientists scientific research researchers study studies space nasa astronaut astronauts "
-                 "rocket moon mars planet planets telescope climate species fossil fossils discovery physics biology "
-                 "experiment universe galaxy asteroid satellite ocean environment environmental archaeologists dinosaur",
-        "ai": "the main subject is science: research findings, space, climate and environment science, nature or discoveries",
+                 "rocket moon mars planet planets telescope species fossil fossils discovery discoveries physics biology "
+                 "experiment universe galaxy asteroid satellite archaeologists archaeology dinosaur breakthrough genome "
+                 "particle quantum evolution",
+        "ai": "the main subject is science: discoveries, scientific research, space, physics, biology or major "
+              "breakthroughs (weather, disasters, climate policy and environment news are false; climate stories only "
+              "when they report a significant scientific discovery)",
     },
     "health": {
         "name": "Health",
@@ -107,8 +111,22 @@ TOPICS = {
         "words": "health medical medicine doctors doctor hospital hospitals patients disease diseases virus vaccine "
                  "vaccines cancer drug drugs treatment nhs outbreak covid flu mental obesity diabetes surgery clinical "
                  "trial heart dementia nurses healthcare infection infections",
-        "ai": "the main subject is health or medicine: diseases, outbreaks, treatments, health systems, public or mental health",
+        "ai": "the main subject is strictly medicine, diseases, treatments, medical research or public health (politics, "
+              "taxes, crime, violence and disasters are false unless the story is mainly about a disease or medical care)",
     },
+}
+TOPICS["climate"] = {
+    "name": "Climate & Weather",   # owner, 3 Nov 2026
+    "feeds": [("BBC News", "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"),
+              ("The Guardian", "https://www.theguardian.com/environment/rss")],
+    "query": "(climate OR weather OR hurricane OR typhoon OR cyclone OR flood OR floods OR earthquake OR wildfire "
+             "OR drought OR heatwave OR storm)",
+    "words": "climate weather hurricane hurricanes typhoon cyclone flood floods flooding earthquake quake tsunami "
+             "wildfire wildfires drought heatwave heat storm storms tornado rain rainfall snow blizzard landslide "
+             "volcano eruption emissions carbon warming cop30 cop environment environmental pollution deforestation "
+             "glacier glaciers sea level",
+    "ai": "the main subject is weather or climate: major weather events, hurricanes, floods, earthquakes and other "
+          "natural disasters, climate change, environmental developments or climate policy",
 }
 TOPIC_WORDS = {t: set(v["words"].split()) for t, v in TOPICS.items()}
 TOPIC_SITES = "(site:reuters.com OR site:apnews.com OR site:bbc.com OR site:theguardian.com OR site:cnbc.com)"
@@ -271,7 +289,8 @@ AI_SYSTEM = (
     "(local, human-interest, entertainment, sport); is_update: true if it is a new development of an ongoing story; "
     "disputed: a short note if the snippets present claims as unverified or contested, else empty string; story: a "
     "3-6 word lowercase label of the underlying story, IDENTICAL for events in this batch that are the same story "
-    "(e.g. 'spain train crash minister'); and one true/false per topic, true only if " +
+    "(e.g. 'spain train crash minister'); and one true/false per news category -- judge from what the story is "
+    "mainly about, not from keywords; a story can belong to several categories or none; true only if " +
     "; ".join(f"{t}: {v['ai']}" for t, v in TOPICS.items()) + ". Keep each summary under 45 words."
 )
 AI_SCHEMA = {
@@ -303,7 +322,7 @@ def _ai_enrich(events: list[dict], ai) -> None:
             arts = sorted(ev["articles"], key=lambda a: -TIER.get(a["source"], 0.5))[:4]
             snippets = " || ".join(f"[{a['source']}] {a['title']}: {a['summary'][:260]}" for a in arts)
             lines.append(f"id={ev['id']} :: {snippets}")
-        key = "news-topics:" + common.fingerprint(*lines)  # new key: rows now carry every topic
+        key = "news-topics2:" + common.fingerprint(*lines)  # new key: rows carry every topic, incl. climate
         result = ai.json_call(key, AI_SYSTEM, "\n".join(lines), AI_SCHEMA, max_tokens=5000) if ai else None
         for row in (result or {}).get("events", []):
             ev = next((e for e in batch if e["id"] == row["id"]), None)
@@ -373,7 +392,9 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             pool = [ev for ev in events if common.within(ev["latest"], window, now)
                     and (tab == "world" or (ev["topics"][tab] if tab in TOPICS else tab in ev["regions"]))]
             pool.sort(key=lambda e: _score(e, now, window), reverse=True)
-            for ev in pool[:15]:   # every tab shows 10 (owner, 3 Nov 2026)
+            # every tab shows 10 (owner, 3 Nov 2026). The biggest stories overall also go to the AI, which
+            # decides each story's categories itself -- keywords only widen the net, they never decide.
+            for ev in pool[:40 if tab == "world" else 15]:
                 ev["candidate"] = True
     _ai_enrich(events, ai)
 
@@ -477,7 +498,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
         "beyond the day. Prefer reported events (disasters, conflicts, elections, deaths, major decisions) over opinion, "
         "analysis or commentary pieces, and over routine forecasts, previews or minor incidents. The 3 picks must be "
         "3 different stories, not two developments of the same story. For a topic section (Business, Tech, "
-        "Entertainment, Science or Health) only choose stories that are mainly about that topic, and judge significance "
+        "Entertainment, Science, Health or Climate & Weather) only choose stories that are mainly about that topic, and judge significance "
         "within the topic. Use only the given text. "
         "Return the ids of your 3 picks, most significant first.")
     MONTH_SCHEMA = {"type": "object", "properties": {"picks": {"type": "array", "items": {"type": "string"}}},
