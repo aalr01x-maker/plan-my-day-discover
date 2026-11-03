@@ -31,8 +31,7 @@ const store = {
 
 // Owner, 3 Nov 2026: every fresh open starts on the default views (News World Top 10 Daily; Movies & TV
 // alternates TV Shows / Movies per open; Gaming and Music All, Best of All Time; Sports Upcoming, all
-// leagues). Views picked during a visit are remembered only for that visit, never across opens.
-const lastView = {};
+// leagues). The section buttons always open these defaults too, never the last tab viewed.
 try { Object.keys(localStorage).filter((k) => k.startsWith("last:")).forEach((k) => localStorage.removeItem(k)); } catch { /* blocked */ }
 const firstMedia = (() => {
   const next = store.get("mediaNext") === "movie" ? "movie" : "tv";
@@ -103,7 +102,7 @@ const wasDrag = (e) => Math.abs(e.clientX - downX) > 8 || Math.abs(e.clientY - d
 /* ---------- shell ---------- */
 function renderSections(active) {
   $("sections").innerHTML = SECTIONS.map((s) =>
-    `<a class="sec" href="${esc(lastView[s.id] || "#/" + s.id)}" ${s.id === active ? 'aria-current="page"' : ""}>${s.icon} ${esc(s.name)}</a>`).join("");
+    `<a class="sec" href="${esc("#/" + s.id)}" ${s.id === active ? 'aria-current="page"' : ""}>${s.icon} ${esc(s.name)}</a>`).join("");
 }
 function tabsRow(el, items, selected, onPick, role = "tab") {
   el.classList.remove("tabs--rows");
@@ -643,7 +642,6 @@ async function route() {
       if (section !== "search" && canonical) {
         const want = href(canonical.filter(Boolean), listQ);
         if (!item && location.hash !== want) history.replaceState(null, "", want);
-        lastView[section] = want;
         lastListKey = section + "|" + canonical.filter(Boolean).join("/") + "|" + listQ.toString();
       }
     } catch (e) {
