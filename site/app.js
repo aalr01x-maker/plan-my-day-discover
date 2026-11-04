@@ -10,8 +10,8 @@ const SECTIONS = [
   { id: "sports", icon: "🏆", name: "Sports", file: "sports" },
 ];
 const RANKINGS = [["all_time", "Best of All Time"], ["recent", "Best Recent"], ["trending", "Trending"]];
-// Owner, 3 Nov 2026: Top 10 on every News tab.
-const NEWS_PERIODS = [["today", "Top 10 Daily"], ["week", "Top 10 Weekly"], ["month", "Top 10 Monthly"]];
+// Owner, 4 Nov 2026: Top 12 on every News tab.
+const NEWS_PERIODS = [["today", "Top 12 Daily"], ["week", "Top 12 Weekly"], ["month", "Top 12 Monthly"]];
 // Topic tabs on the first row (no label), then World and the regions on the second (owner, 3 Nov 2026).
 const NEWS_TOPICS = ["business", "tech", "entertainment", "celebrities", "science", "health", "climate"];
 const NEWS_TOPIC_NOTES = { business: " about business, the economy, markets and companies", tech: " about technology, tech companies, AI and the internet",
@@ -29,7 +29,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },
 };
 
-// Owner, 3 Nov 2026: every fresh open starts on the default views (News World Top 10 Daily; Movies & TV
+// Owner, 3 Nov 2026: every fresh open starts on the default views (News World Top 12 Daily; Movies & TV
 // alternates TV Shows / Movies per open; Gaming and Music All, Best of All Time; Sports Upcoming, all
 // leagues). The section buttons always open these defaults too, never the last tab viewed.
 try { Object.keys(localStorage).filter((k) => k.startsWith("last:")).forEach((k) => localStorage.removeItem(k)); } catch { /* blocked */ }

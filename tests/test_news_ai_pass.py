@@ -52,7 +52,7 @@ class AiPass(unittest.TestCase):
         result = self.build(FakeAI())
         science = result["regions"]["science"]
         for period in ("today", "week", "month"):
-            self.assertEqual(len(science[period]), 10)
+            self.assertEqual(len(science[period]), 12)
             self.assertEqual({c["summary_by"] for c in science[period]}, {"ai"}, period)
 
     def test_runs_without_ai(self):

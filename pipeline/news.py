@@ -1,4 +1,4 @@
-"""Optimal News: Top 10 on every tab -- seven topics (Business, Tech, Entertainment, Celebrities, Science, Health, Climate & Weather), World and seven regions; Today (24 h), This Week (7 days) and
+"""Optimal News: Top 12 on every tab -- seven topics (Business, Tech, Entertainment, Celebrities, Science, Health, Climate & Weather), World and seven regions; Today (24 h), This Week (7 days) and
 This Month (30 days). The month view also draws on every earlier daily ranking (saved in state),
 so stories that dominated two weeks ago still count after their articles drop out of the feeds.
 
@@ -435,7 +435,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                     and (tab == CELEB_TAB or not ev["celeb_only"])
                     and (tab == "world" or (_maybe_topic(ev, tab) if tab in TOPICS else tab in ev["regions"]))]
             pool.sort(key=lambda e: _score(e, now, window, tab), reverse=True)
-            # every tab shows 10 (owner, 3 Nov 2026). The biggest stories overall also go to the AI, which
+            # every tab shows 12 (owner, 4 Nov 2026). The biggest stories overall also go to the AI, which
             # decides each story's categories itself -- keywords only widen the net, they never decide.
             for ev in pool[:40 if tab == "world" else 60 if tab == CELEB_TAB else 30 if tab in TOPICS else 15]:   # trade feeds are mostly industry news the AI rejects
                 ev["candidate"] = True
@@ -507,8 +507,8 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                 break
         return picked
 
-    def size(tab: str) -> int:   # owner, 3 Nov 2026: Top 10 on every tab (topics, World and regions)
-        return 10
+    def size(tab: str) -> int:   # owner, 4 Nov 2026: Top 12 on every tab (3 full lines of 4 on a wide screen)
+        return 12
 
     def in_tab(ev: dict, tab: str) -> bool:
         ai_row = ev.get("ai") or {}
@@ -640,7 +640,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             if label == "today" and len(picked) < n:
                 # a quiet day for this region: fill Today with its most recent stories (dated on the card)
                 older = sorted((ev for ev in events if in_tab(ev, region) and ev not in picked
-                                and common.within(ev["latest"], 168, now)), key=lambda e: e["latest"], reverse=True)   # up to 7 days so every list reaches 10
+                                and common.within(ev["latest"], 168, now)), key=lambda e: e["latest"], reverse=True)   # up to 7 days so every list reaches 12
                 for ev in older:
                     if len(picked) >= n:
                         break
@@ -651,9 +651,9 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                                     note_for(ev, region)) for ev in picked]
         out["month"] = month_top3(region)
         regions[region] = {"name": TAB_NAMES[region], **out}
-        # save this region's 10 strongest stories of the week for future month rankings
+        # save this region's strongest stories of the week for future month rankings
         week_pool = sorted((ev for ev in events if in_tab(ev, region) and common.within(ev["latest"], 168, now)),
-                           key=lambda e: _score(e, now, 168, region), reverse=True)[:10]
+                           key=lambda e: _score(e, now, 168, region), reverse=True)[:size(region)]
         for ev in week_pool:
             entry = new_archive.get(ev["id"]) or {"tabs": []}
             entry.update(card=card(ev, 168), parts=_parts(ev), story=(ev.get("ai") or {}).get("story") or "")

@@ -41,7 +41,7 @@ def main() -> None:
     news = (load("news").get("regions") or {}).get("world") or {}
     top = first(news.get("today") or [])
     if top:
-        lines.append(f"📰 **Top story today:** {top.get('headline')}  \n[See the top 10 world stories →]({SITE}/#/news/world/today)")
+        lines.append(f"📰 **Top story today:** {top.get('headline')}  \n[See the top 12 world stories →]({SITE}/#/news/world/today)")
 
     tv = ((load("movies").get("tv") or {}).get("all") or {})
     show = first(tv.get("trending") or [])
