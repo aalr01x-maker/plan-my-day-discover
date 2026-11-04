@@ -24,7 +24,7 @@ from datetime import timedelta
 
 import feedparser
 
-from . import common, geo
+from . import common, geo, news_images
 from .youtube import YouTube, best_match, embed
 
 FEEDS = [
@@ -662,5 +662,9 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                 entry["notes"] = {**(entry.get("notes") or {}), region: note_for(ev, region)}
             new_archive[ev["id"]] = entry
     common.save_json(ARCHIVE, new_archive)
+    try:
+        news_images.fill(regions)   # only cards without a picture
+    except Exception as exc:  # pictures must never stop the news update
+        common.log(f"news pictures failed: {exc}")
     return {"regions": regions, "article_count": len(items), "event_count": len(events),
             "outlets": sorted({i["source"] for i in items})}

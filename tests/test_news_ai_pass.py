@@ -45,7 +45,8 @@ class AiPass(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "archive.json"
             path.write_text(json.dumps(archive or {}))
-            with mock.patch.object(news, "_collect", lambda: articles(200)), mock.patch.object(news, "ARCHIVE", path):
+            with mock.patch.object(news, "_collect", lambda: articles(200)), mock.patch.object(news, "ARCHIVE", path), \
+                    mock.patch.object(news.news_images, "fill", lambda regions: {}):
                 return news.build(ai=ai)
 
     def test_no_story_is_shown_unjudged(self):
