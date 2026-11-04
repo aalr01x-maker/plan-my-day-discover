@@ -344,7 +344,9 @@ SIGNIFICANCE = {"major": 1.0, "notable": 0.6, "minor": 0.15}
 
 def _ai_enrich(events: list[dict], ai) -> None:
     """Summaries + classification for candidate events, 10 per call, cached by event content."""
-    todo = [ev for ev in events if ev.get("candidate")]
+    todo = [ev for ev in events if ev.get("candidate") and not ev.get("ai") and not ev.get("ai_tried")]
+    for ev in todo:
+        ev["ai_tried"] = True
     for i in range(0, len(todo), 10):
         batch = todo[i : i + 10]
         lines = []
@@ -520,9 +522,32 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             return tab == ai_row["region"]
         return tab in ev["regions"]
 
-    # Earlier daily rankings: stories whose articles have left the feeds still count for the month
+    # Tabs fill up with stories below the first AI cut when the AI rejects stories. Nothing is shown
+    # unjudged: whatever would appear (or reach the month editor) goes to the AI, until nothing new does.
+    def unjudged_on_show() -> list[dict]:
+        found = []
+        for tab in TABS:
+            for window, n in ((24, size(tab)), (168, size(tab)), (720, 25 + 2 * size(tab))):
+                pool = [ev for ev in events if in_tab(ev, tab) and common.within(ev["latest"], window, now)]
+                pool.sort(key=lambda e: _score(e, now, window, tab), reverse=True)
+                found += top3(pool, n)
+                if window == 168:   # Today's quiet-day filler: newest of the week
+                    found += sorted(pool, key=lambda e: e["latest"], reverse=True)[:n]
+        return [ev for ev in found if not ev.get("ai") and not ev.get("ai_tried")]
+
+    while ai and ai.available:
+        waiting = unjudged_on_show()
+        if not waiting:
+            break
+        for ev in waiting:
+            ev["candidate"] = True
+        _ai_enrich(events, ai)
+
+    # Earlier daily rankings: stories whose articles have left the feeds still count for the month.
+    # Stories saved without an AI check (AI outages) stay out: they cannot be judged any more.
     archive = {k: v for k, v in common.load_json(ARCHIVE, {}).items()
-               if common.within(common.parse_time(v["parts"]["latest"]), 30 * 24, now)}
+               if common.within(common.parse_time(v["parts"]["latest"]), 30 * 24, now)
+               and v["card"].get("summary_by") == "ai"}
     live_ids = {ev["id"] for ev in events}
 
     def same_as_archived(entry: dict, picked: list) -> bool:
@@ -584,7 +609,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             res = ai.json_call("news-month:" + common.fingerprint(region, listing, str(n)), MONTH_SYSTEM.replace("the 3 most", f"the {n} most")
                                .replace("The 3 picks must be 3 different", f"The {n} picks must be {n} different")
                                .replace("ids of your 3 picks", f"ids of your {n} picks"),
-                               f"Section: {TAB_NAMES[region]}\n{listing}", MONTH_SCHEMA, max_tokens=300)
+                               f"Section: {TAB_NAMES[region]}\n{listing}", MONTH_SCHEMA, max_tokens=1500)
             chosen = [int(i) for i in (res or {}).get("picks", []) if i in ids]
             chosen = list(dict.fromkeys(chosen))[:n]
             picked = [picked[i] for i in chosen] + [x for i, x in enumerate(picked) if i not in chosen]

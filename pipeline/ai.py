@@ -102,7 +102,7 @@ class AI:
             return None
         self.budget.record(response.usage)
         if response.stop_reason != "end_turn":
-            common.log(f"AI: stopped with {response.stop_reason}; result discarded")
+            common.log(f"AI: stopped with {response.stop_reason} ({key.split(':')[0]}); result discarded")
             return None
         text = next((b.text for b in response.content if b.type == "text"), "")
         try:
