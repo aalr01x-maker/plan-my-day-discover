@@ -353,7 +353,7 @@ def _ai_enrich(events: list[dict], ai) -> None:
             snippets = " || ".join(f"[{a['source']}] {a['title']}: {a['summary'][:260]}" for a in arts)
             lines.append(f"id={ev['id']} :: {snippets}")
         key = "news-topics4:" + common.fingerprint(*lines)  # new key: rows carry every topic + <topic>_why notes
-        result = ai.json_call(key, AI_SYSTEM, "\n".join(lines), AI_SCHEMA, max_tokens=5000) if ai else None
+        result = ai.json_call(key, AI_SYSTEM, "\n".join(lines), AI_SCHEMA, max_tokens=8000) if ai else None
         for row in (result or {}).get("events", []):
             ev = next((e for e in batch if e["id"] == row["id"]), None)
             if ev:
