@@ -1,4 +1,4 @@
-"""Optimal News: Top 10 on every tab -- six topics (Business, Tech, Entertainment, Science, Health, Climate & Weather), World and seven regions; Today (24 h), This Week (7 days) and
+"""Optimal News: Top 10 on every tab -- seven topics (Business, Tech, Entertainment, Celebrities, Science, Health, Climate & Weather), World and seven regions; Today (24 h), This Week (7 days) and
 This Month (30 days). The month view also draws on every earlier daily ranking (saved in state),
 so stories that dominated two weeks ago still count after their articles drop out of the feeds.
 
@@ -89,6 +89,25 @@ TOPICS = {
         "ai": "the story is mainly about entertainment or culture in any form (film, TV, music, celebrities, "
               "streaming, the arts, awards and more)",
     },
+    # Owner, 4 Nov 2026: right after Entertainment. The trade press and People carry this beat; the
+    # wires barely do, so those outlets count ONLY here (see CELEB_OUTLETS).
+    "celebrities": {
+        "name": "Celebrities",
+        "feeds": [("Variety", "https://variety.com/feed/"),
+                  ("The Hollywood Reporter", "https://www.hollywoodreporter.com/feed/"),
+                  ("Deadline", "https://deadline.com/feed/"),
+                  ("Billboard", "https://www.billboard.com/feed/")],
+        "sites": "(site:people.com OR site:variety.com OR site:hollywoodreporter.com OR site:deadline.com "
+                 "OR site:billboard.com OR site:apnews.com OR site:bbc.com OR site:theguardian.com)",
+        "query": "(celebrity OR actor OR actress OR singer OR rapper OR \"reality star\" OR divorce OR engaged OR dies)",
+        "words": "celebrity celebrities actor actress singer rapper comedian supermodel popstar hollywood divorce "
+                 "engaged engagement pregnant dating rehab kardashian paparazzi",
+        "ai": "the story is mainly about a famous person from entertainment or popular culture (actors, singers, "
+              "rappers, TV personalities, models, influencers): their life, relationships, health, death, legal "
+              "trouble, public statements or career moves (film or TV releases, box office, deals, casting notices and "
+              "industry business are false unless the person is the story; politicians, business leaders and athletes "
+              "are false)",
+    },
     "science": {
         "name": "Science",
         "feeds": [("BBC News", "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"),
@@ -128,6 +147,9 @@ TOPICS["climate"] = {
     "ai": "the main subject is weather or climate: major weather events, hurricanes, floods, earthquakes and other "
           "natural disasters, climate change, environmental developments or climate policy",
 }
+# Celebrity outlets count only in the Celebrities tab: every other tab ranks as if they did not exist.
+CELEB_TAB = "celebrities"
+CELEB_OUTLETS = {"Variety", "The Hollywood Reporter", "Deadline", "Billboard", "People"}
 TOPIC_WORDS = {t: set(v["words"].split()) for t, v in TOPICS.items()}
 TOPIC_SITES = "(site:reuters.com OR site:apnews.com OR site:bbc.com OR site:theguardian.com OR site:cnbc.com)"
 WAR_WORDS = set("war missile missiles strikes troops drone drones killed attack military army".split())
@@ -142,9 +164,11 @@ WIRE_QUERIES = {
     "europe": "Europe", "oceania": "(Australia OR New Zealand OR Pacific)",
 }
 WIRES = {"reuters.com": "Reuters", "apnews.com": "AP", "bbc.com": "BBC News", "bbc.co.uk": "BBC News",
-         "theguardian.com": "The Guardian", "cnbc.com": "CNBC"}
+         "theguardian.com": "The Guardian", "cnbc.com": "CNBC", "people.com": "People", "variety.com": "Variety",
+         "hollywoodreporter.com": "The Hollywood Reporter", "deadline.com": "Deadline", "billboard.com": "Billboard"}
 TIER = {"Reuters": 1.0, "AP": 1.0, "BBC News": 0.95, "Al Jazeera": 0.85, "DW": 0.85, "France 24": 0.85, "CNBC": 0.85,
-        "ABC News (Australia)": 0.9, "RNZ": 0.9, "The Guardian": 0.85}
+        "ABC News (Australia)": 0.9, "RNZ": 0.9, "The Guardian": 0.85, "Variety": 0.8, "The Hollywood Reporter": 0.8,
+        "Deadline": 0.8, "Billboard": 0.8, "People": 0.75}
 
 # Official news channels for report videos (matched from their latest uploads).
 NEWS_CHANNELS = {
@@ -189,10 +213,10 @@ def _collect() -> list[dict]:
                   for q in WIRE_QUERIES.values()]
     for topic, t in TOPICS.items():
         feeds += [(o, u, None, topic) for o, u in t["feeds"]]
-        feeds.append((None, GNEWS + f"{TOPIC_SITES} {t['query']} when:7d", None, topic))
+        feeds.append((None, GNEWS + f"{t.get('sites', TOPIC_SITES)} {t['query']} when:7d", None, topic))
         for k in range(1, 4):
             after, before = today - timedelta(days=7 * k + 7), today - timedelta(days=7 * k)
-            feeds.append((None, GNEWS + f"{TOPIC_SITES} {t['query']} after:{after} before:{before}", None, topic))
+            feeds.append((None, GNEWS + f"{t.get('sites', TOPIC_SITES)} {t['query']} after:{after} before:{before}", None, topic))
     for outlet, url, region, topic in feeds:
         try:
             parsed = feedparser.parse(common.get(url, as_json=False))
@@ -258,6 +282,7 @@ def _cluster(items: list[dict]) -> list[dict]:
         arts = ev["articles"]
         # one article per outlet counts toward corroboration (dedupe syndication)
         ev["outlets"] = sorted({a["source"] for a in arts})
+        ev["celeb_only"] = set(ev["outlets"]) <= CELEB_OUTLETS
         text = " ".join(a["title"] + " " + a["summary"] for a in arts)
         labelled = sorted({a["feed_region"] for a in arts if a["feed_region"]})
         lead_title = max(arts, key=lambda a: (TIER.get(a["source"], 0.5), len(a["summary"])))["title"]
@@ -327,7 +352,7 @@ def _ai_enrich(events: list[dict], ai) -> None:
             arts = sorted(ev["articles"], key=lambda a: -TIER.get(a["source"], 0.5))[:4]
             snippets = " || ".join(f"[{a['source']}] {a['title']}: {a['summary'][:260]}" for a in arts)
             lines.append(f"id={ev['id']} :: {snippets}")
-        key = "news-topics3:" + common.fingerprint(*lines)  # new key: rows carry every topic + <topic>_why notes
+        key = "news-topics4:" + common.fingerprint(*lines)  # new key: rows carry every topic + <topic>_why notes
         result = ai.json_call(key, AI_SYSTEM, "\n".join(lines), AI_SCHEMA, max_tokens=5000) if ai else None
         for row in (result or {}).get("events", []):
             ev = next((e for e in batch if e["id"] == row["id"]), None)
@@ -340,14 +365,15 @@ ARCHIVE = common.STATE / "news_archive.json"
 
 def _parts(ev: dict) -> dict:
     """What a score is made of, kept so archived stories can be re-scored later."""
-    return {"outlets": len(ev["outlets"]),
+    return {"outlets": len(set(ev["outlets"]) - CELEB_OUTLETS) or len(ev["outlets"]), "outlets_all": len(ev["outlets"]),
             "sig": SIGNIFICANCE[ev["ai"]["significance"]] if ev.get("ai") else ev["keyword_severity"],
             "latest": common.iso(ev["latest"]), "tier": max(TIER.get(s, 0.5) for s in ev["outlets"]),
             "days": len({a["published"].date() for a in ev["articles"]})}
 
 
-def _score_parts(parts: dict, now, window_hours: float) -> float:
-    corroboration = min(1.0, math.log1p(parts["outlets"]) / math.log1p(6))
+def _score_parts(parts: dict, now, window_hours: float, tab: str | None = None) -> float:
+    outlets = parts.get("outlets_all", parts["outlets"]) if tab == CELEB_TAB else parts["outlets"]
+    corroboration = min(1.0, math.log1p(outlets) / math.log1p(6))
     age_h = (now - common.parse_time(parts["latest"])).total_seconds() / 3600
     recency = max(0.0, 1 - age_h / window_hours)
     # how many days the story stayed in the news: a week or month list favours lasting stories
@@ -361,8 +387,8 @@ def _score_parts(parts: dict, now, window_hours: float) -> float:
     return round(0.35 * corroboration + 0.30 * parts["sig"] + 0.20 * recency + 0.15 * parts["tier"], 4)
 
 
-def _score(ev: dict, now, window_hours: float) -> float:
-    return _score_parts(_parts(ev), now, window_hours)
+def _score(ev: dict, now, window_hours: float, tab: str | None = None) -> float:
+    return _score_parts(_parts(ev), now, window_hours, tab)
 
 
 def _why(ev: dict) -> str:
@@ -404,11 +430,12 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
     for window in (24, 168, 720):
         for tab in TABS:
             pool = [ev for ev in events if common.within(ev["latest"], window, now)
+                    and (tab == CELEB_TAB or not ev["celeb_only"])
                     and (tab == "world" or (_maybe_topic(ev, tab) if tab in TOPICS else tab in ev["regions"]))]
-            pool.sort(key=lambda e: _score(e, now, window), reverse=True)
+            pool.sort(key=lambda e: _score(e, now, window, tab), reverse=True)
             # every tab shows 10 (owner, 3 Nov 2026). The biggest stories overall also go to the AI, which
             # decides each story's categories itself -- keywords only widen the net, they never decide.
-            for ev in pool[:40 if tab == "world" else 30 if tab in TOPICS else 15]:
+            for ev in pool[:40 if tab == "world" else 60 if tab == CELEB_TAB else 30 if tab in TOPICS else 15]:   # trade feeds are mostly industry news the AI rejects
                 ev["candidate"] = True
     _ai_enrich(events, ai)
 
@@ -424,7 +451,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
     def note_for(ev: dict, tab: str) -> str:
         return ((ev.get("ai") or {}).get(tab + "_why") or "").strip() if tab in TOPICS else ""
 
-    def card(ev: dict, window: float) -> dict:
+    def card(ev: dict, window: float, tab: str | None = None) -> dict:
         lead = ev["lead"]
         ai_row = ev.get("ai") or {}
         video = best_match(lead["title"], ev["latest"], videos, min_similarity=0.32, max_days=3) if videos else None
@@ -439,7 +466,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
             "updated": common.iso(ev["latest"]),
             "significance": ai_row.get("significance"),
             "disputed": ai_row.get("disputed") or "",
-            "score": _score(ev, now, window),
+            "score": _score(ev, now, window, tab),
             "why": _why(ev),
             "image": next((a["image"] for a in ev["articles"] if a["image"]), None),
             "sources": [{"name": a["source"], "title": a["title"], "url": a["url"], "published": common.iso(a["published"])}
@@ -483,6 +510,8 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
 
     def in_tab(ev: dict, tab: str) -> bool:
         ai_row = ev.get("ai") or {}
+        if ev["celeb_only"] and tab != CELEB_TAB:
+            return False
         if tab == "world":
             return True
         if tab in TOPICS:  # the AI's judgement wins once it has seen the event
@@ -519,7 +548,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
         "beyond the day. Prefer reported events (disasters, conflicts, elections, deaths, major decisions) over opinion, "
         "analysis or commentary pieces, and over routine forecasts, previews or minor incidents. The 3 picks must be "
         "3 different stories, not two developments of the same story. For a topic section (Business, Tech, "
-        "Entertainment, Science, Health or Climate & Weather) only choose stories that are mainly about that topic, and judge significance "
+        "Entertainment, Celebrities, Science, Health or Climate & Weather) only choose stories that are mainly about that topic, and judge significance "
         "within the topic. Use only the given text. "
         "Return the ids of your 3 picks, most significant first.")
     MONTH_SCHEMA = {"type": "object", "properties": {"picks": {"type": "array", "items": {"type": "string"}}},
@@ -527,8 +556,8 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
 
     def month_top3(region: str) -> list[dict]:
         n = size(region)
-        pool = [(ev, _score(ev, now, 720)) for ev in events if in_tab(ev, region)]
-        pool += [(a, _score_parts(a["parts"], now, 720)) for k, a in archive.items()
+        pool = [(ev, _score(ev, now, 720, region)) for ev in events if in_tab(ev, region)]
+        pool += [(a, _score_parts(a["parts"], now, 720, region)) for k, a in archive.items()
                  if k not in live_ids and region in a["tabs"]]
         pool.sort(key=lambda x: -x[1])
         picked = []
@@ -563,10 +592,10 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
         out = []
         for item in picked:
             if "parts" in item:
-                out.append(with_note({**item["card"], "score": _score_parts(item["parts"], now, 720), "older": False},
+                out.append(with_note({**item["card"], "score": _score_parts(item["parts"], now, 720, region), "older": False},
                                      (item.get("notes") or {}).get(region, "")))
             else:
-                out.append(with_note({**card(item, 720), "older": False}, note_for(item, region)))
+                out.append(with_note({**card(item, 720, region), "older": False}, note_for(item, region)))
         return out
 
     regions = {}
@@ -580,7 +609,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                     continue
                 if in_tab(ev, region):
                     pool.append(ev)
-            pool.sort(key=lambda e: _score(e, now, window), reverse=True)
+            pool.sort(key=lambda e: _score(e, now, window, region), reverse=True)
             n = size(region)
             picked = top3(pool, n)
             if label == "today" and len(picked) < n:
@@ -593,13 +622,13 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
                     if not any(same_story(ev, p) for p in picked):
                         picked.append(ev)
                         ev["_older"] = True
-            out[label] = [with_note({**card(ev, window), "older": bool(ev.get("_older")) and not common.within(ev["latest"], 24, now)},
+            out[label] = [with_note({**card(ev, window, region), "older": bool(ev.get("_older")) and not common.within(ev["latest"], 24, now)},
                                     note_for(ev, region)) for ev in picked]
         out["month"] = month_top3(region)
         regions[region] = {"name": TAB_NAMES[region], **out}
         # save this region's 10 strongest stories of the week for future month rankings
         week_pool = sorted((ev for ev in events if in_tab(ev, region) and common.within(ev["latest"], 168, now)),
-                           key=lambda e: _score(e, now, 168), reverse=True)[:10]
+                           key=lambda e: _score(e, now, 168, region), reverse=True)[:10]
         for ev in week_pool:
             entry = new_archive.get(ev["id"]) or {"tabs": []}
             entry.update(card=card(ev, 168), parts=_parts(ev), story=(ev.get("ai") or {}).get("story") or "")
