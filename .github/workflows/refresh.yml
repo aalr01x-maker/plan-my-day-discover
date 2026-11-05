@@ -21,7 +21,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # GitHub's schedule is only the backup for the cron-job.org trigger and can start hours late: when
+  # today's update already ran or is running, the backup does nothing (owner, 5 Nov 2026).
+  gate:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          since="$(date -u +%F)T07:00:00Z"
+          n=$(gh api -X GET "repos/$GH_REPO/actions/workflows/refresh.yml/runs" -f created=">=$since" -f event=workflow_dispatch \
+            --jq '[.workflow_runs[] | select(.status != "completed" or .conclusion == "success")] | length' || echo 0)
+          echo "today's manual or cron-job.org runs: $n"
+          if [ "$n" = "0" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; else echo "run=false" >> "$GITHUB_OUTPUT"; fi
+
   refresh:
+    needs: gate
+    if: ${{ always() && (github.event_name != 'schedule' || needs.gate.outputs.run == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 240
     steps:
