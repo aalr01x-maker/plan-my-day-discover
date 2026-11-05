@@ -333,7 +333,7 @@ async function news(parts, q) {
   return [`news`, tab, period];
 }
 function newsCard(s) {
-  return `<article class="card" tabindex="0" data-item="${esc(s.id)}">${img(s.image, "thumb", "")}
+  return `<article class="card" tabindex="0" data-item="${esc(s.id)}">${img(s.image, "thumb", "") || '<div class="thumb thumb-none" aria-hidden="true">📰</div>'}
     <div class="body"><h3 class="title">${esc(s.headline)}</h3>
     <div class="meta">${esc(s.country || "")}${s.country ? " · " : ""}${ago(s.updated)} · ${new Set(s.sources.map((x) => x.name)).size} outlet${new Set(s.sources.map((x) => x.name)).size === 1 ? "" : "s"}</div>
     <div class="badges">${s.significance ? `<span class="badge ${s.significance === "major" ? "major" : ""}">${esc(s.significance)}</span>` : ""}

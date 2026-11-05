@@ -60,6 +60,41 @@ class Fill(unittest.TestCase):
         self.assertIsNone(c["image"])
 
 
+RSS = """<rss><channel>
+<item><title>Other story about ports</title><News:Image>http://bing/other.jpg</News:Image></item>
+<item><title>Oil slumps after election &amp; rebuke</title><News:Image>http://bing/th?id=1&amp;pid=News</News:Image></item>
+</channel></rss>"""
+
+
+class Bing(unittest.TestCase):
+    def answer(self, headline):
+        response = mock.Mock(ok=True, status_code=200, text=RSS)
+        with mock.patch.object(ni.requests, "get", lambda *a, **k: response):
+            return ni.bing_image(headline)
+
+    def test_keeps_only_a_close_headline_match(self):
+        self.assertEqual(self.answer("Oil slumps after election rebuke"), "https://bing/th?id=1&pid=News")
+
+    def test_rejects_a_different_story(self):
+        self.assertIsNone(self.answer("Oil giant reports record quarterly profits in Norway"))
+
+    def test_used_only_after_every_outlet_fails(self):
+        c = {**card("a", [("Reuters", "r"), ("BBC", "b")]), "headline": "Some headline"}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(ni, "CACHE", Path(tmp) / "c.json"), \
+                mock.patch.object(ni, "image_from_link", lambda link: None), \
+                mock.patch.object(ni, "bing_image", lambda h: "bing.jpg"):
+            ni.fill(regions(c))
+        self.assertEqual(c["image"], "bing.jpg")
+
+    def test_not_used_when_an_outlet_has_a_picture(self):
+        c = {**card("a", [("BBC", "b")]), "headline": "Some headline"}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(ni, "CACHE", Path(tmp) / "c.json"), \
+                mock.patch.object(ni, "image_from_link", lambda link: "bbc.jpg"), \
+                mock.patch.object(ni, "bing_image", lambda h: self.fail("Bing must not be asked")):
+            ni.fill(regions(c))
+        self.assertEqual(c["image"], "bbc.jpg")
+
+
 class PageImage(unittest.TestCase):
     def test_reads_either_attribute_order_and_unescapes(self):
         self.assertEqual(ni.page_image('<meta property="og:image" content="https://x/a.jpg?a=1&amp;b=2">'), "https://x/a.jpg?a=1&b=2")
