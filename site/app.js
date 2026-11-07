@@ -358,9 +358,19 @@ async function movies(parts) {
   const media = parts[1] === "movie" || parts[1] === "tv" ? parts[1] : firstMedia;   // alternates per open (owner, 3 Nov)
   const set = media === "tv" ? data.tv : data.movies;
   const tabs = Object.entries(set).map(([id, t]) => [id, t.name]);
+  if (media === "movie" && data.airing) tabs.splice(1, 0, ["airing", "Airing This Week"]);   // one list, Movies only (owner, 7 Nov 2026)
+  if (media === "movie" && data.airing && parts[2] === "airing") {
+    tabsRow($("tabs"), tabs, "airing", (id) => go(["movies", media, id], null));
+    segGroups([{ label: "Type", items: MEDIA, selected: media, onPick: (id) => go(["movies", id], null) }]);
+    $("filters").innerHTML = "";
+    heading("movies", ["Movies", "Airing This Week"]);
+    note("Airing This Week: American movies opening in the next 7 days, soonest first, from Wikipedia's film release lists. Most aren't rated yet, so there is no 7.5 minimum on this list.");
+    paint(data.airing, movieCard, movieDetail, "No movies on the list open in the next 7 days.");
+    return ["movies", "movie", "airing"];
+  }
   const genre = set[parts[2]] ? parts[2] : tabs[0]?.[0];
   const ranking = RANKINGS.some(([r]) => r === parts[3]) ? parts[3] : "all_time";
-  tabsRow($("tabs"), tabs, genre, (id) => go(["movies", media, id, ranking], null));
+  tabsRow($("tabs"), tabs, genre, (id) => go(["movies", media, id, ...(id === "airing" ? [] : [ranking])], null));
   segGroups([
     { label: "Type", items: MEDIA, selected: media, onPick: (id) => go(["movies", id, (id === "tv" ? data.tv : data.movies)[genre] ? genre : "", ranking].filter(Boolean), null) },
     { label: "Ranking", items: RANKINGS, selected: ranking, onPick: (id) => go(["movies", media, genre, id], null) },
@@ -377,12 +387,14 @@ async function movies(parts) {
   return ["movies", media, genre, ranking];
 }
 const ratingOf = (m) => m.rating.value ?? 0;
+const movieScores = (m) => m.rating.value == null ? '<span class="score">Not rated yet</span>'
+  : `<span class="score">${esc(m.rating.source)} <b>${ratingOf(m).toFixed(1)}</b>/10 · ${num(m.rating.votes)} votes</span>`;
 function movieCard(m) {
   const stream = m.watch?.stream?.length ? `Stream: ${m.watch.stream.slice(0, 2).join(", ")}${m.watch.region !== "KW" ? " (US)" : ""}` : "";
   return `<article class="card" tabindex="0" data-item="${esc(m.id)}"><div class="media-row">${img(m.poster, "thumb poster", "")}
-    <div><h3 class="title"><span class="rank">#${m.rank}</span>${esc(m.title)}</h3>
-    <div class="meta">${esc(m.year)} · ${esc((m.genres || []).slice(0, 3).join(", "))}</div>
-    <div class="scores"><span class="score">${esc(m.rating.source)} <b>${ratingOf(m).toFixed(1)}</b>/10 · ${num(m.rating.votes)} votes</span></div>
+    <div><h3 class="title">${m.airing ? "" : `<span class="rank">#${m.rank}</span>`}${esc(m.title)}</h3>
+    <div class="meta">${m.airing ? "Opens " + kuwait(m.released, false) : esc(m.year)}${m.genres?.length ? " · " + esc(m.genres.slice(0, 3).join(", ")) : ""}</div>
+    <div class="scores">${movieScores(m)}</div>
     ${stream ? `<div class="meta">${esc(stream)}</div>` : ""}</div></div>
     <div class="body"><p class="summary">${esc(m.overview)}</p>${why(m.why)}</div></article>`;
 }
@@ -391,9 +403,8 @@ function movieDetail(m) {
   const region = w.region === "KW" ? "Kuwait" : w.region === "US" ? "the US (not listed for Kuwait)" : null;
   return `<div class="detail"><h2 id="sheetTitle">${esc(m.title)} <span class="meta">(${esc(m.year)})</span></h2>
     <div class="split">${img(m.poster, "", m.title)}<div>
-    <div class="scores"><span class="score">${esc(m.rating.source)} <b>${ratingOf(m).toFixed(1)}</b>/10</span><span class="score">${num(m.rating.votes)} votes</span>
-    </div>
-    <div class="meta">${esc((m.genres || []).join(", "))} · ${m.released ? "Released " + kuwait(m.released, false) : ""}
+    <div class="scores">${movieScores(m)}</div>
+    <div class="meta">${esc((m.genres || []).join(", "))} · ${m.released ? (m.airing ? "Opens " : "Released ") + kuwait(m.released, false) : ""}
     ${m.seasons_count ? ` · ${m.seasons_count} season${m.seasons_count > 1 ? "s" : ""} · ${esc(m.status || "")}` : ""}</div>
     <p>${esc(m.overview)}</p></div></div>
     ${videoBlock(m.trailer)}
@@ -403,8 +414,8 @@ function movieDetail(m) {
       ${m.seasons.map((s) => `<tr><td>${s.season} ${s.year ? `(${esc(s.year)})` : ""}</td><td>${s.rating.toFixed(1)}</td><td>${s.rated_episodes}</td></tr>`).join("")}</table>` : ""}
     ${m.top_episodes?.length ? `<h3>Highest-rated episodes${m.ratings_source ? " (" + esc(m.ratings_source) + ")" : ""}</h3><ul>${m.top_episodes.map((e) =>
       `<li>S${e.season}E${e.episode} ${e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">“${esc(e.name)}”</a>` : `“${esc(e.name)}”`} – ${Number(e.rating).toFixed(1)} (${num(e.votes)} votes)</li>`).join("")}</ul>` : ""}
-    <h3>Why it ranks here</h3><p>${esc(m.why)}</p>${linksBlock(m.links)}
-    <p class="meta">Ratings: ${m.rating.source === "IMDb" ? "IMDb (official daily data)" : "TMDB"}. Details and streaming: TMDB / JustWatch.</p></div>`;
+    <h3>${m.airing ? "Why it's listed" : "Why it ranks here"}</h3><p>${esc(m.why)}</p>${linksBlock(m.links)}
+    <p class="meta">Ratings: ${m.rating.source === "IMDb" ? "IMDb (official daily data)" : "TMDB"}. ${m.airing ? "Opening date: Wikipedia. " : ""}Details and streaming: TMDB / JustWatch.</p></div>`;
 }
 
 /* ---------- Gaming ---------- */

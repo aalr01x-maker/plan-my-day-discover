@@ -10,12 +10,15 @@ IMDb still rates and orders them. Every list shows titles rated 7.5+ only.
                      episodes this year or last year); 75% rating + 25% votes
   Trending           IMDb votes gained per day over the last week (from our daily counts) 70%
                      + rating 30%; until a day of history exists, the most-voted recent titles
+
+Airing This Week is one separate list, movies only: see airing.py. TMDB plays the same small part
+there (poster, overview, trailer, streaming) and does not decide which movies are listed.
 """
 from __future__ import annotations
 
 from datetime import timedelta
 
-from . import common
+from . import airing, common
 from .imdb import IMDb
 
 API = "https://api.themoviedb.org/3"
@@ -261,6 +264,38 @@ def _members(tmdb: TMDB, media: str, raw: dict, pages: int = 10) -> set[str]:
     return ids
 
 
+def _airing_card(tmdb: TMDB, ratings: dict, titles: dict, row: dict) -> dict:
+    iid, d = row.get("imdb"), {}
+    tid = _tmdb_id(tmdb, iid, "movie") if iid else None
+    if tid:
+        try:
+            d = tmdb.get(f"/movie/{tid}", {"append_to_response": "videos,watch/providers"}, ttl_h=24)
+        except common.FetchError as exc:
+            common.log(f"movies: airing details {tid}: {exc}")
+    rating, votes = ratings.get(iid) or (None, 0)
+    genres = titles.get(iid, {}).get("genres") or {g["name"] for g in d.get("genres") or []}
+    wiki = row.get("page") or airing.page_name(int(row["date"][:4]))
+    return {"id": f"airing-{iid or row['date'] + '-' + row['title']}", "airing": True, "title": row["title"], "year": row["date"][:4],
+            "released": row["date"], "overview": d.get("overview") or "",
+            "poster": IMG + d["poster_path"] if d.get("poster_path") else None, "genres": sorted(genres),
+            "rating": {"value": rating, "votes": votes, "source": "IMDb"},
+            "why": f"Opens {row['date']} on Wikipedia's list of American film releases.",
+            "trailer": _trailer(d.get("videos")), "watch": _providers(d.get("watch/providers")),
+            "links": ([{"name": "IMDb", "url": f"https://www.imdb.com/title/{iid}/"}] if iid else [])
+                     + [{"name": "Wikipedia", "url": "https://en.wikipedia.org/wiki/" + wiki.replace(" ", "_")}]}
+
+
+def _airing_rows(state: dict, first_day) -> list[dict]:
+    """This week's films; if Wikipedia can't be read, what's left of the last list that was."""
+    try:
+        rows = airing.this_week(first_day)
+        state["airing_last"] = rows
+        return rows
+    except (common.FetchError, ValueError, KeyError, TypeError) as exc:
+        common.log(f"movies: airing list unavailable: {exc}")
+        return airing.in_window(state.get("airing_last") or [], first_day)
+
+
 def build() -> dict:
     token = common.env("TMDB_TOKEN")
     if not token:
@@ -417,6 +452,9 @@ def build() -> dict:
             out[media][tab] = {"name": name, **cards, "notes": notes}
             common.log(f"movies {media}/{tab}: {len(pool)} on IMDb; {len(cards['all_time'])}/{len(cards['recent'])}/{len(cards['trending'])}")
 
+    airing_items = [_airing_card(tmdb, imdb.ratings, titles, row) for row in _airing_rows(state, now.date())]
+    common.log(f"movies: {len(airing_items)} airing this week")
+
     # TV season ratings and best episodes: IMDb (one pass over its episode file), else TMDB
     episodes = imdb.episodes({i for _, _, i in tv_extras_todo if i})
     for card, show, iid in tv_extras_todo:
@@ -426,6 +464,6 @@ def build() -> dict:
         state["tmdb"] = dict(list(state["tmdb"].items())[-12000:])
     common.save_json(STATE, state)
     common.log(f"movies: {tmdb.calls} TMDB calls")
-    return {"movies": out["movie"], "tv": out["tv"], "watch_region": REGION,
+    return {"movies": out["movie"], "tv": out["tv"], "airing": airing_items, "watch_region": REGION,
             "sources": ["IMDb (titles, genres, ratings, votes)", "TMDB (posters, trailers, anime/superhero lists)",
-                        "JustWatch (via TMDB)"]}
+                        "JustWatch (via TMDB)", "Wikipedia + Wikidata (Airing This Week dates and IMDb ids)"]}
