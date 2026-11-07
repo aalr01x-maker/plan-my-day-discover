@@ -182,7 +182,7 @@ function heading(section, crumbs) {
   $("sectionLink").innerHTML = section === "movies"
     ? `<div class="link-box"><a href="https://seriesgraph.com/" target="_blank" rel="noopener"><img src="img/links/seriesgraph.jpg" alt="SeriesGraph episode ratings chart" loading="lazy" decoding="async">
        <span>📊 SeriesGraph: see every episode's rating for any TV show</span></a>
-       <a href="https://www.amazon.com/gp/video/storefront" target="_blank" rel="noopener"><span>🛒 Amazon Prime Video Store: top tier newly released movies/TV shows, but with a US account for more options</span></a></div>` : "";
+       <a href="https://www.amazon.com/gp/video/storefront" target="_blank" rel="noopener"><span>🛒 Amazon Prime Video Store: top tier newly released movies/TV shows. A US account adds more options; US account + US card + US billing address gives the most</span></a></div>` : "";
   $("sectionSources").innerHTML = SOURCES[section] ? `<b>Sources:</b> ${esc(SOURCES[section])}` : "";
   $("sectionAbout").innerHTML = ABOUT[section] ? `<b>How this section is ranked:</b> ${esc(ABOUT[section])}` : "";
   document.title = [crumbs.filter(Boolean).join(" · "), s?.name, "Discover"].filter(Boolean).join(" – ");
