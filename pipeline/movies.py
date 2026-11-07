@@ -10,9 +10,6 @@ IMDb still rates and orders them. Every list shows titles rated 7.5+ only.
                      episodes this year or last year); 75% rating + 25% votes
   Trending           IMDb votes gained per day over the last week (from our daily counts) 70%
                      + rating 30%; until a day of history exists, the most-voted recent titles
-  Airing This Week   movies only (owner, 7 Nov 2026): out in the next 7 days in Kuwait or the US, from
-                     TMDB's release dates, most popular on TMDB first. IMDb has no release dates and
-                     new movies have few votes, so this one list has no IMDb order or 7.5 floor
 """
 from __future__ import annotations
 
@@ -75,18 +72,11 @@ def _min_votes(media: str, ranking: str, tab: str, factor: float = 1.0) -> int:
 
 NO_RECENT = {"classic"}   # pre-1990 / pre-2000 by definition: no releases in the last 12 months
 LIMIT = {"movie": 20, "tv": 20}
-AIRING_DAYS = 7
-AIRING_REGIONS = (REGION, FALLBACK_REGION)
-AIRING_TYPES = {2: "in theaters (limited)", 3: "in theaters", 4: "on streaming or digital"}   # TMDB release types
-AIRING_KEYWORDS = {"biography": "kw:biography"}   # TMDB has no Biography genre
-TMDB_GENRES = {28: "Action", 12: "Adventure", 16: "Animation", 35: "Comedy", 80: "Crime", 99: "Documentary", 18: "Drama",
-               10751: "Family", 14: "Fantasy", 36: "History", 27: "Horror", 10402: "Music", 9648: "Mystery",
-               10749: "Romance", 878: "Sci-Fi", 53: "Thriller", 10752: "War", 37: "Western"}
 WEIGHTS = {"all_time": 1.0, "recent": 0.75, "trending": 0.30}   # all time: rating only, like IMDb Top Rated (owner)
 
 
 DETAIL_FIELDS = ("id", "title", "name", "release_date", "first_air_date", "overview", "poster_path", "genres",
-                 "number_of_seasons", "status", "seasons", "videos", "watch/providers", "release_dates")
+                 "number_of_seasons", "status", "seasons", "videos", "watch/providers")
 EPISODE_FIELDS = ("episode_number", "name", "vote_average", "vote_count", "air_date")
 
 
@@ -105,8 +95,6 @@ def _slim(path: str, data: dict) -> dict:
         if out.get("watch/providers"):
             results = out["watch/providers"].get("results") or {}
             out["watch/providers"] = {"results": {r: results[r] for r in ("KW", "US") if r in results}}
-        if out.get("release_dates"):
-            out["release_dates"] = {"results": [r for r in out["release_dates"].get("results") or [] if r.get("iso_3166_1") in AIRING_REGIONS]}
         return out
     return data
 
@@ -273,101 +261,6 @@ def _members(tmdb: TMDB, media: str, raw: dict, pages: int = 10) -> set[str]:
     return ids
 
 
-def _release_in_window(block: dict, start: str, end: str) -> tuple[str, str, str] | None:
-    """(date, region, how) of the title's first release in the window, Kuwait's dates before the US's."""
-    for region in AIRING_REGIONS:
-        for r in (block or {}).get("results") or []:
-            if r.get("iso_3166_1") != region:
-                continue
-            hits = sorted((x["release_date"][:10], x["type"]) for x in r.get("release_dates") or []
-                          if x.get("type") in AIRING_TYPES and x.get("release_date") and start <= x["release_date"][:10] <= end)
-            if hits:
-                return hits[0][0], region, AIRING_TYPES[hits[0][1]]
-    return None
-
-
-def _airing_search(tmdb: TMDB, start: str, end: str, extra: dict, pages: int) -> dict[int, dict]:
-    found = {}
-    for region in AIRING_REGIONS:
-        params = {**extra, "region": region, "release_date.gte": start, "release_date.lte": end,
-                  "with_release_type": "|".join(map(str, AIRING_TYPES)), "without_genres": "10770", "sort_by": "popularity.desc"}
-        for t in _discover(tmdb, "movie", params, pages):
-            if t.get("poster_path"):   # a listing with no poster is rarely a real release
-                found.setdefault(t["id"], t)
-    return found
-
-
-def _airing_belongs(rule: dict, t: dict, members: set[int] | None) -> bool:
-    """The tab's own rule, read from TMDB's genres: a movie that isn't out yet has no IMDb entry to read."""
-    g = {TMDB_GENRES[i] for i in t.get("genre_ids") or [] if i in TMDB_GENRES}
-    if rule.get("all"):
-        return True
-    if rule.get("classic"):
-        return False
-    anime = "Animation" in g and t.get("original_language") == "ja"
-    if rule.get("anime"):
-        return anime
-    if rule.get("adult_animation"):
-        return "Animation" in g and not anime and "Family" not in g and t["id"] in (members or set())
-    if "Animation" in g and not rule.get("animation_ok"):
-        return False
-    if g & rule.get("none", set()):
-        return False
-    return t["id"] in members if members is not None else bool(g & rule["any"])
-
-
-def _airing_card(tmdb: TMDB, imdb: IMDb, t: dict, release: tuple[str, str, str], d: dict) -> dict:
-    date, region, how = release
-    iid = _imdb_id(tmdb, "movie", t["id"])
-    rating, votes = imdb.rating(iid) or (None, 0)
-    return {"id": f"movie-{iid or 'tmdb' + str(t['id'])}", "airing": True, "title": d.get("title") or t.get("title"), "year": date[:4],
-            "released": date, "overview": d.get("overview") or t.get("overview"), "poster": IMG + t["poster_path"],
-            "genres": sorted(TMDB_GENRES[i] for i in t.get("genre_ids") or [] if i in TMDB_GENRES),
-            "rating": {"value": rating, "votes": votes, "source": "IMDb"}, "score": round(t.get("popularity") or 0, 2),
-            "why": f"Out {date} {how} in {'Kuwait' if region == 'KW' else 'the US'}; ranked by TMDB popularity.",
-            "trailer": _trailer(d.get("videos")), "watch": _providers(d.get("watch/providers")),
-            "links": ([{"name": "IMDb", "url": f"https://www.imdb.com/title/{iid}/"}] if iid else [])
-                     + [{"name": "TMDB", "url": f"https://www.themoviedb.org/movie/{t['id']}"}]}
-
-
-def airing_lists(tmdb: TMDB, imdb: IMDb, first_day) -> dict[str, list[dict]]:
-    """Each movie tab's releases in the next AIRING_DAYS days, checked against each title's own release dates."""
-    start, end = first_day.isoformat(), (first_day + timedelta(days=AIRING_DAYS - 1)).isoformat()
-    pool = sorted(_airing_search(tmdb, start, end, {}, 5).values(), key=lambda t: -(t.get("popularity") or 0))
-    checked: dict[int, tuple] = {}
-
-    def verified(t):
-        if t["id"] not in checked:
-            d = {}
-            try:
-                d = tmdb.get(f"/movie/{t['id']}", {"append_to_response": "videos,watch/providers,release_dates"}, ttl_h=24)
-            except common.FetchError as exc:
-                common.log(f"movies: airing details {t['id']}: {exc}")
-            checked[t["id"]] = (_release_in_window(d.get("release_dates"), start, end), d)
-        return checked[t["id"]]
-
-    out = {}
-    for tab, (_, rule) in TABS.items():
-        members, rows = None, pool
-        raw = AIRING_KEYWORDS.get(tab) and {"with_keywords": AIRING_KEYWORDS[tab]} or (rule["member"][0] if "member" in rule else None)
-        if raw:
-            params = _resolve(tmdb, raw)
-            found = _airing_search(tmdb, start, end, params, 2) if params else {}
-            members = set(found)
-            rows = sorted({**{t["id"]: t for t in pool}, **found}.values(), key=lambda t: -(t.get("popularity") or 0))
-        cards = []
-        for t in rows:
-            if len(cards) >= LIMIT["movie"]:
-                break
-            if not _airing_belongs(rule, t, members):
-                continue
-            release, d = verified(t)
-            if release:
-                cards.append({**_airing_card(tmdb, imdb, t, release, d), "rank": len(cards) + 1})
-        out[tab] = cards
-    return out
-
-
 def build() -> dict:
     token = common.env("TMDB_TOKEN")
     if not token:
@@ -523,10 +416,6 @@ def build() -> dict:
                 notes[ranking] = (notes[ranking] + " " + extra) if ranking in notes else extra
             out[media][tab] = {"name": name, **cards, "notes": notes}
             common.log(f"movies {media}/{tab}: {len(pool)} on IMDb; {len(cards['all_time'])}/{len(cards['recent'])}/{len(cards['trending'])}")
-
-    for tab, cards in airing_lists(tmdb, imdb, now.date()).items():
-        out["movie"][tab]["airing"] = cards
-        common.log(f"movies movie/{tab}: {len(cards)} airing this week")
 
     # TV season ratings and best episodes: IMDb (one pass over its episode file), else TMDB
     episodes = imdb.episodes({i for _, _, i in tv_extras_todo if i})
