@@ -1,4 +1,5 @@
-"""Movies > Airing This Week (owner, 7 Nov 2026): one list, movies only, not from TMDB.
+"""Movies > Airing This Week (owner, 7 Nov 2026): one list, movies only, not from TMDB. Movies that opened in
+the past 7 days ("out now", owner) and the ones opening in the next 7, by opening date.
 
 Which movies and their dates come from Wikipedia's "List of American films of <year>", whose tables
 give the exact opening day. Wikidata gives each film's IMDb id. Both are read through their official
@@ -13,7 +14,8 @@ from . import common
 
 WIKIPEDIA = "https://en.wikipedia.org/w/api.php"
 WIKIDATA = "https://www.wikidata.org/w/api.php"
-DAYS = 7
+DAYS = 7          # opening today and the next 6 days
+PAST_DAYS = 7     # already out: opened in the 7 days before today
 MONTHS = {m: i for i, m in enumerate(("January", "February", "March", "April", "May", "June", "July", "August",
                                       "September", "October", "November", "December"), 1)}
 TITLE = re.compile(r"''\[\[([^\]|]+)(?:\|([^\]]+))?\]\]''|''([^'\[\]]+)''")
@@ -50,7 +52,7 @@ def parse_list(wikitext: str, year: int) -> list[dict]:
 
 
 def in_window(rows: list[dict], first_day: date) -> list[dict]:
-    start, end = first_day.isoformat(), (first_day + timedelta(days=DAYS - 1)).isoformat()
+    start, end = (first_day - timedelta(days=PAST_DAYS)).isoformat(), (first_day + timedelta(days=DAYS - 1)).isoformat()
     return sorted((r for r in rows if start <= r["date"] <= end), key=lambda r: (r["date"], r["title"].lower()))
 
 
@@ -72,7 +74,7 @@ def imdb_ids(pages: list[str]) -> dict[str, str]:
 def this_week(first_day: date) -> list[dict]:
     """This week's films with their IMDb ids. Raises if a list can't be read, so the caller can keep the last one."""
     rows: list[dict] = []
-    for year in sorted({first_day.year, (first_day + timedelta(days=DAYS - 1)).year}):
+    for year in sorted({(first_day - timedelta(days=PAST_DAYS)).year, (first_day + timedelta(days=DAYS - 1)).year}):
         data = common.get(WIKIPEDIA, params={"action": "parse", "page": page_name(year), "prop": "wikitext", "format": "json", "formatversion": 2})
         parsed = parse_list((data.get("parse") or {}).get("wikitext") or "", year)
         if not parsed:

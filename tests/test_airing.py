@@ -36,10 +36,12 @@ def test_parse_carries_month_and_day_across_rows_and_reads_every_title_form():
         ("2026-11-13", "God with Us", None), ("2026-11-13", "Paper Tiger", "Paper Tiger (2026 film)"), ("2026-12-01", "Later", "Later")]
 
 
-def test_window_is_seven_days_from_today_soonest_first():
+def test_window_is_the_past_seven_days_and_the_next_seven_by_date():
     rows = airing.parse_list(TABLE, 2026)
-    assert [r["title"] for r in airing.in_window(rows, date(2026, 11, 7))] == ["God with Us", "Paper Tiger"]
-    assert [r["title"] for r in airing.in_window(rows, date(2026, 11, 6))] == ["The Cat in the Hat", "Wild Horse Nine"]
+    assert [r["title"] for r in airing.in_window(rows, date(2026, 11, 7))] == ["The Cat in the Hat", "Wild Horse Nine", "God with Us", "Paper Tiger"]
+    assert [r["title"] for r in airing.in_window(rows, date(2026, 11, 14))] == ["God with Us", "Paper Tiger"]
+    assert [r["title"] for r in airing.in_window(rows, date(2026, 11, 21))] == []
+    assert [r["title"] for r in airing.in_window(rows, date(2026, 11, 26))] == ["Later"]
 
 
 def test_ids_come_from_wikidata_and_a_film_without_one_stays_listed(monkeypatch):
@@ -49,16 +51,16 @@ def test_ids_come_from_wikidata_and_a_film_without_one_stays_listed(monkeypatch)
         return {"entities": {"Q1": {"sitelinks": {"enwiki": {"title": "Paper Tiger (2026 film)"}},
                                     "claims": {"P345": [{"mainsnak": {"datavalue": {"value": "tt9"}}}]}}}}
     monkeypatch.setattr(common, "get", fake)
-    assert [(r["title"], r["imdb"]) for r in airing.this_week(date(2026, 11, 7))] == [("God with Us", None), ("Paper Tiger", "tt9")]
+    assert [(r["title"], r["imdb"]) for r in airing.this_week(date(2026, 11, 14))] == [("God with Us", None), ("Paper Tiger", "tt9")]
 
 
 def test_when_wikipedia_fails_the_last_list_is_kept_without_passed_films(monkeypatch):
     def down(*a, **k):
         raise common.FetchError("down")
     monkeypatch.setattr(airing.common, "get", down)
-    last = [{"date": "2026-11-06", "title": "Old"}, {"date": "2026-11-08", "title": "Soon"}]
+    last = [{"date": "2026-10-30", "title": "Old"}, {"date": "2026-11-06", "title": "Out"}, {"date": "2026-11-08", "title": "Soon"}]
     state = {"airing_last": last}
-    assert [r["title"] for r in movies._airing_rows(state, date(2026, 11, 7))] == ["Soon"] and state["airing_last"] == last
+    assert [r["title"] for r in movies._airing_rows(state, date(2026, 11, 7))] == ["Out", "Soon"] and state["airing_last"] == last
 
 
 def test_a_page_with_no_films_counts_as_a_failure(monkeypatch):

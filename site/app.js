@@ -366,8 +366,8 @@ async function movies(parts) {
     segGroups([{ label: "Type", items: MEDIA, selected: media, onPick: (id) => go(["movies", id], null) }]);
     $("filters").innerHTML = "";
     heading("movies", ["Movies", "Airing This Week"]);
-    note("Airing This Week: American movies opening in the next 7 days, soonest first, from Wikipedia's film release lists. Most aren't rated yet, so there is no 7.5 minimum on this list.");
-    paint(data.airing, movieCard, movieDetail, "No movies on the list open in the next 7 days.");
+    note("Airing This Week: American movies already out (opened in the past 7 days) and opening in the next 7 days, by opening date, from Wikipedia's film release lists. Most aren't rated yet, so there is no 7.5 minimum on this list.");
+    paint(data.airing, movieCard, movieDetail, "No movies on the list opened in the past 7 days or open in the next 7.");
     return ["movies", "movie", "airing"];
   }
   const genre = set[parts[2]] ? parts[2] : tabs[0]?.[0];
@@ -389,13 +389,15 @@ async function movies(parts) {
   return ["movies", media, genre, ranking];
 }
 const ratingOf = (m) => m.rating.value ?? 0;
+const todayLocal = () => new Date().toLocaleDateString("en-CA", { timeZone: viewerTz() });   // YYYY-MM-DD
+const opening = (m) => (m.released <= todayLocal() ? "Out now · opened " : "Opens ") + kuwait(m.released, false);
 const movieScores = (m) => m.rating.value == null ? '<span class="score">Not rated yet</span>'
   : `<span class="score">${esc(m.rating.source)} <b>${ratingOf(m).toFixed(1)}</b>/10 · ${num(m.rating.votes)} votes</span>`;
 function movieCard(m) {
   const stream = m.watch?.stream?.length ? `Stream: ${m.watch.stream.slice(0, 2).join(", ")}${m.watch.region !== "KW" ? " (US)" : ""}` : "";
   return `<article class="card" tabindex="0" data-item="${esc(m.id)}"><div class="media-row">${img(m.poster, "thumb poster", "")}
     <div><h3 class="title">${m.airing ? "" : `<span class="rank">#${m.rank}</span>`}${esc(m.title)}</h3>
-    <div class="meta">${m.airing ? "Opens " + kuwait(m.released, false) : esc(m.year)}${m.genres?.length ? " · " + esc(m.genres.slice(0, 3).join(", ")) : ""}</div>
+    <div class="meta">${m.airing ? opening(m) : esc(m.year)}${m.genres?.length ? " · " + esc(m.genres.slice(0, 3).join(", ")) : ""}</div>
     <div class="scores">${movieScores(m)}</div>
     ${stream ? `<div class="meta">${esc(stream)}</div>` : ""}</div></div>
     <div class="body"><p class="summary">${esc(m.overview)}</p>${why(m.why)}</div></article>`;
@@ -406,7 +408,7 @@ function movieDetail(m) {
   return `<div class="detail"><h2 id="sheetTitle">${esc(m.title)} <span class="meta">(${esc(m.year)})</span></h2>
     <div class="split">${img(m.poster, "", m.title)}<div>
     <div class="scores">${movieScores(m)}</div>
-    <div class="meta">${esc((m.genres || []).join(", "))} · ${m.released ? (m.airing ? "Opens " : "Released ") + kuwait(m.released, false) : ""}
+    <div class="meta">${esc((m.genres || []).join(", "))} · ${m.released ? (m.airing ? opening(m) : "Released " + kuwait(m.released, false)) : ""}
     ${m.seasons_count ? ` · ${m.seasons_count} season${m.seasons_count > 1 ? "s" : ""} · ${esc(m.status || "")}` : ""}</div>
     <p>${esc(m.overview)}</p></div></div>
     ${videoBlock(m.trailer)}
