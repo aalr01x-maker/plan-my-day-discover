@@ -1,0 +1,64 @@
+{
+ "sections": {
+  "news": {
+   "last_attempt": "2026-11-07T08:05:25+00:00",
+   "updated_at": "2026-11-07T08:21:14+00:00",
+   "ok": true,
+   "error": null,
+   "items": 540
+  },
+  "sports": {
+   "last_attempt": "2026-11-07T08:25:58+00:00",
+   "updated_at": "2026-11-07T08:28:17+00:00",
+   "ok": true,
+   "error": null,
+   "items": 207
+  },
+  "music": {
+   "last_attempt": "2026-11-07T08:28:19+00:00",
+   "updated_at": "2026-11-07T09:11:24+00:00",
+   "ok": true,
+   "error": null,
+   "items": 504
+  },
+  "games": {
+   "last_attempt": "2026-11-07T08:23:01+00:00",
+   "updated_at": "2026-11-07T08:25:58+00:00",
+   "ok": true,
+   "error": null,
+   "items": 711
+  },
+  "movies": {
+   "last_attempt": "2026-11-07T09:35:31+00:00",
+   "updated_at": "2026-11-07T09:36:02+00:00",
+   "ok": true,
+   "error": null,
+   "items": 1792
+  }
+ },
+ "run": {
+  "started": "2026-11-07T09:35:30+00:00",
+  "finished": "2026-11-07T09:36:02+00:00",
+  "ai": {
+   "model": "claude-haiku-5-5",
+   "month": "2026-11",
+   "spent_usd": 1.4867,
+   "cap_usd": 15.0,
+   "active": true,
+   "note": null
+  },
+  "youtube_units": 0,
+  "failures": 0
+ },
+ "order": [
+  "news",
+  "movies",
+  "games",
+  "sports",
+  "music"
+ ],
+ "schedule": {
+  "tz": "Asia/Kuwait",
+  "hour": 12
+ }
+}
