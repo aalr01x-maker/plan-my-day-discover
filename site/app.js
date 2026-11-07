@@ -357,12 +357,13 @@ function newsDetail(s) {
 /* ---------- Movies & TV ---------- */
 async function movies(parts) {
   const data = await load("movies");
-  // Airing This Week: a third Type button beside TV Shows / Movies, with only an "All" tab (owner, 7 Nov 2026)
-  const types = data.airing ? [...MEDIA, ["airing", "Airing This Week"]] : MEDIA;
-  const pickType = (id) => go(id === "airing" ? ["movies", "airing"] : ["movies", id], null);
+  // Airing This Week: a third Type button to the right of TV Shows / Movies, only on the All tab, and no
+  // ranking buttons while it is picked (owner, 7 Nov 2026)
+  const withAiring = data.airing ? [...MEDIA, ["airing", "Airing This Week"]] : MEDIA;
+  const pickType = (id) => go(id === "airing" ? ["movies", "airing"] : ["movies", id, "all"], null);
   if (data.airing && (parts[1] === "airing" || parts[2] === "airing")) {
-    tabsRow($("tabs"), [["all", "All"]], "all", () => {});
-    segGroups([{ label: "Type", items: types, selected: "airing", onPick: pickType }]);
+    tabsRow($("tabs"), Object.entries(data.movies).map(([id, t]) => [id, t.name]), "all", (id) => go(["movies", "movie", id], null));
+    segGroups([{ label: "Type", items: withAiring, selected: "airing", onPick: pickType }]);
     $("filters").innerHTML = "";
     heading("movies", ["Airing This Week", "All"]);
     note("Airing This Week: American movies already out (opened in the past 7 days) first, then the ones opening in the next 7 days, from Wikipedia's film release lists. "
@@ -377,7 +378,7 @@ async function movies(parts) {
   const ranking = RANKINGS.some(([r]) => r === parts[3]) ? parts[3] : "all_time";
   tabsRow($("tabs"), tabs, genre, (id) => go(["movies", media, id, ranking], null));
   segGroups([
-    { label: "Type", items: types, selected: media, onPick: (id) => id === "airing" ? pickType(id) : go(["movies", id, (id === "tv" ? data.tv : data.movies)[genre] ? genre : "", ranking].filter(Boolean), null) },
+    { label: "Type", items: genre === "all" ? withAiring : MEDIA, selected: media, onPick: (id) => id === "airing" ? pickType(id) : go(["movies", id, (id === "tv" ? data.tv : data.movies)[genre] ? genre : "", ranking].filter(Boolean), null) },
     { label: "Ranking", items: RANKINGS, selected: ranking, onPick: (id) => go(["movies", media, genre, id], null) },
   ]);
   $("filters").innerHTML = "";
