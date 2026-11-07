@@ -357,24 +357,27 @@ function newsDetail(s) {
 /* ---------- Movies & TV ---------- */
 async function movies(parts) {
   const data = await load("movies");
+  // Airing This Week: a third Type button beside TV Shows / Movies, with only an "All" tab (owner, 7 Nov 2026)
+  const types = data.airing ? [...MEDIA, ["airing", "Airing This Week"]] : MEDIA;
+  const pickType = (id) => go(id === "airing" ? ["movies", "airing"] : ["movies", id], null);
+  if (data.airing && (parts[1] === "airing" || parts[2] === "airing")) {
+    tabsRow($("tabs"), [["all", "All"]], "all", () => {});
+    segGroups([{ label: "Type", items: types, selected: "airing", onPick: pickType }]);
+    $("filters").innerHTML = "";
+    heading("movies", ["Airing This Week", "All"]);
+    note("Airing This Week: American movies already out (opened in the past 7 days) first, then the ones opening in the next 7 days, from Wikipedia's film release lists. "
+      + "Each group goes from the highest IMDb rating down, then the movies not rated yet by opening date. Most new movies aren't rated yet, so there is no 7.5 minimum here.");
+    paint(airingOrder(data.airing), movieCard, movieDetail, "No movies on the list opened in the past 7 days or open in the next 7.");
+    return ["movies", "airing"];
+  }
   const media = parts[1] === "movie" || parts[1] === "tv" ? parts[1] : firstMedia;   // alternates per open (owner, 3 Nov)
   const set = media === "tv" ? data.tv : data.movies;
   const tabs = Object.entries(set).map(([id, t]) => [id, t.name]);
-  if (media === "movie" && data.airing) tabs.splice(1, 0, ["airing", "Airing This Week"]);   // one list, Movies only (owner, 7 Nov 2026)
-  if (media === "movie" && data.airing && parts[2] === "airing") {
-    tabsRow($("tabs"), tabs, "airing", (id) => go(["movies", media, id], null));
-    segGroups([{ label: "Type", items: MEDIA, selected: media, onPick: (id) => go(["movies", id], null) }]);
-    $("filters").innerHTML = "";
-    heading("movies", ["Movies", "Airing This Week"]);
-    note("Airing This Week: American movies already out (opened in the past 7 days) and opening in the next 7 days, by opening date, from Wikipedia's film release lists. Most aren't rated yet, so there is no 7.5 minimum on this list.");
-    paint(data.airing, movieCard, movieDetail, "No movies on the list opened in the past 7 days or open in the next 7.");
-    return ["movies", "movie", "airing"];
-  }
   const genre = set[parts[2]] ? parts[2] : tabs[0]?.[0];
   const ranking = RANKINGS.some(([r]) => r === parts[3]) ? parts[3] : "all_time";
-  tabsRow($("tabs"), tabs, genre, (id) => go(["movies", media, id, ...(id === "airing" ? [] : [ranking])], null));
+  tabsRow($("tabs"), tabs, genre, (id) => go(["movies", media, id, ranking], null));
   segGroups([
-    { label: "Type", items: MEDIA, selected: media, onPick: (id) => go(["movies", id, (id === "tv" ? data.tv : data.movies)[genre] ? genre : "", ranking].filter(Boolean), null) },
+    { label: "Type", items: types, selected: media, onPick: (id) => id === "airing" ? pickType(id) : go(["movies", id, (id === "tv" ? data.tv : data.movies)[genre] ? genre : "", ranking].filter(Boolean), null) },
     { label: "Ranking", items: RANKINGS, selected: ranking, onPick: (id) => go(["movies", media, genre, id], null) },
   ]);
   $("filters").innerHTML = "";
@@ -390,6 +393,12 @@ async function movies(parts) {
 }
 const ratingOf = (m) => m.rating.value ?? 0;
 const todayLocal = () => new Date().toLocaleDateString("en-CA", { timeZone: viewerTz() });   // YYYY-MM-DD
+// out now first, then opening later; in each, highest IMDb rating down (more votes first on a tie), then unrated by date
+function airingOrder(list) {
+  const today = todayLocal();
+  const key = (m) => [m.released <= today ? 0 : 1, m.rating.value == null ? 1 : 0, -(m.rating.value ?? 0), -(m.rating.votes || 0), m.released, m.title];
+  return [...list].sort((a, b) => { const x = key(a), y = key(b); for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return x[i] < y[i] ? -1 : 1; return 0; });
+}
 const opening = (m) => (m.released <= todayLocal() ? "Out now · opened " : "Opens ") + kuwait(m.released, false);
 const movieScores = (m) => m.rating.value == null ? '<span class="score">Not rated yet</span>'
   : `<span class="score">${esc(m.rating.source)} <b>${ratingOf(m).toFixed(1)}</b>/10 · ${num(m.rating.votes)} votes</span>`;
