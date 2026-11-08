@@ -189,3 +189,14 @@ table.mini td, table.mini th { border-bottom: 1px solid var(--line); padding: 5p
 .score { font-size: 15px; font-weight: 700; margin: 4px 0; font-variant-numeric: tabular-nums; }
 @keyframes livepulse { 50% { opacity: 0.65; } }
 @media (prefers-reduced-motion: reduce) { .st-live { animation: none; } }
+/* More Sports: the sport names in a clear row right above the explanation box, and each sport's name
+   as a heading over its events (owner, 9 Nov 2026) */
+.sport-strip { margin: 10px 0 8px; }
+.sport-strip-title { font-size: 13px; font-weight: 700; color: var(--muted); text-align: center; margin-bottom: 6px; }
+.sport-strip-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.sport-pill { font: inherit; font-size: 15px; font-weight: 700; padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; }
+.sport-pill span { font-size: 12px; font-weight: 600; color: var(--muted); margin-left: 4px; }
+.sport-pill.on { border-color: currentColor; background: rgba(127, 127, 127, .18); }
+.sport-pill.off { opacity: .55; }
+.sport-head { grid-column: 1 / -1; margin: 10px 0 0; font-size: 15px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.sport-head span { font-size: 12px; font-weight: 600; color: var(--muted); }

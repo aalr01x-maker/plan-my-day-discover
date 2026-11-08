@@ -457,11 +457,42 @@ def _group(league: str, ref: str) -> str:
     return "football" if ref.startswith("soccer/") else GROUP_OF.get(league, "more")
 
 
+def _espn_recent(league: str, path: str, now) -> list[dict]:
+    """Games that started in the last 30 hours, with the final score when ESPN has it (owner, 9 Nov 2026).
+    The browser can't ask ESPN itself (ESPN's servers refuse browser requests), so the daily run keeps
+    the last day's results for the Finished tab."""
+    out, seen = [], set()
+    for offset in (-1, 0):
+        for e in _espn_day(path, (now + timedelta(days=offset)).strftime("%Y%m%d")):
+            st = ((e.get("status") or {}).get("type") or {})
+            start = common.parse_time(e.get("date"))
+            if e.get("id") in seen or st.get("state") not in ("in", "post") or not start or start < now - timedelta(hours=30):
+                continue
+            seen.add(e.get("id"))
+            c = (e.get("competitions") or [{}])[0]
+            teams = c.get("competitors") or []
+            home = next((t for t in teams if t.get("homeAway") == "home"), teams[0] if teams else {})
+            away = next((t for t in teams if t.get("homeAway") == "away"), teams[1] if len(teams) > 1 else {})
+            nm = lambda t: (t.get("team") or {}).get("shortDisplayName") or (t.get("team") or {}).get("displayName") or (t.get("athlete") or {}).get("displayName") or ""
+            score = ""
+            if st.get("state") == "post" and len(teams) == 2 and home.get("score") is not None and away.get("score") is not None:
+                score = f"{nm(home)} {home.get('score')} – {away.get('score')} {nm(away)}"
+            out.append({"league": league, "title": e.get("name") or e.get("shortName"), "when": e.get("date"),
+                        "venue": (c.get("venue") or {}).get("fullName"),
+                        "image": (home.get("team") or {}).get("logo"), "image2": (away.get("team") or {}).get("logo"),
+                        "url": ((e.get("links") or [{}])[0]).get("href"), "final": score,
+                        "done": st.get("state") == "post"})
+        time.sleep(0.2)
+    return out
+
+
 def build(now=None) -> dict:
     now = now or common.now_utc()
-    events, empty = [], []
+    events, empty, recent = [], [], []
     for league, icon, source, ref, kind in LEAGUES:
         if source == "espn":
+            recent += [{**g, "id": common.fingerprint(f"{league}|{g['title']}|{g['when']}"), "icon": icon, "source": "ESPN",
+                        "group": _group(league, ref)} for g in _espn_recent(league, ref, now)]
             got = _espn_games(league, ref, now) if kind == "games" else _espn_events(league, ref, now)
         elif source == "wikisnooker":
             got = _wiki_snooker(league, now) or _tsdb(league, ref, now)
@@ -493,4 +524,4 @@ def build(now=None) -> dict:
                        for g in ("football", "nba", "nhl", "nfl", "mlb", "more")},
             "tickets": {k: {"name": v[0], "url": v[1]} for k, v in TICKETS.items() if v},
             "watch": {k: {"name": v[0], "url": v[1]} for k, v in WATCH.items()},
-            "off_season": empty, "built_at": common.iso(now)}
+            "off_season": empty, "recent": recent, "built_at": common.iso(now)}

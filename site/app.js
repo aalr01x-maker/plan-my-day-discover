@@ -570,11 +570,33 @@ const UPCOMING_TABS = [
   ["upcoming-mlb", "⚾ Upcoming MLB", "mlb"], ["upcoming-more", "🏁 Upcoming More Sports", "more"],
 ];
 const GROUP_OF_LEAGUE = { NBA: "nba", NHL: "nhl", NFL: "nfl", MLB: "mlb" };
-// Live Now, Finished and Today come first (owner, 8 Nov 2026): every sport together, split into the same groups
-const CROSS_TABS = [["live", "🔴 Live Now", "@live"], ["finished", "✅ Finished", "@finished"], ["today", "📍 Today", "@today"]];
+// Finished and Today come first (owner, 8-9 Nov 2026): every sport together, grouped by sport.
+// ESPN's servers refuse requests from a browser, so nothing here is fetched live: the daily noon run keeps
+// the last day's final scores, and "on now" is worked out from each game's start time and usual length.
+// Live Now was dropped (owner, 9 Nov 2026): with one update a day it could only repeat Today.
+const CROSS_TABS = [["finished", "✅ Finished", "@finished"], ["today", "📍 Today", "@today"]];
 const GROUP_HEADS = [["football", "⚽ Football"], ["nba", "🏀 NBA"], ["nhl", "🏒 NHL"], ["nfl", "🏈 NFL"], ["mlb", "⚾ MLB"], ["more", "🏁 More Sports"]];
 const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const isToday = (e) => (e.date_only ? e.when.slice(0, 10) === localDay(new Date()) : localDay(new Date(e.when)) === localDay(new Date()));
+// usual length of a game or event, in minutes, to tell "on now" from "finished"
+const LENGTH = { football: 115, nba: 150, nhl: 150, nfl: 200, mlb: 180, UFC: 300, "Formula 1": 120, NASCAR: 210, Boxing: 240 };
+const lengthOf = (e) => (LENGTH[e.league] || LENGTH[groupOf(e)] || 180) * 60e3;
+const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+// every game with its state right now: upcoming, on now (by the clock) or finished (score from the noon run)
+function withState(up) {
+  const now = Date.now(), seen = new Set(), out = [];
+  for (const e of [...(up.recent || []), ...up.events]) {
+    const k = `${e.league}|${e.title}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    const start = Date.parse(e.when);
+    if (e.date_only || !(start <= now)) { out.push(e); continue; }
+    const end = start + lengthOf(e);
+    if (e.done || end <= now) out.push({ ...e, status: "finished", score: e.final || "", ended: Math.min(end, now) });
+    else out.push({ ...e, status: "live", clock: `started ${hhmm(start)}, ends about ${hhmm(end)}` });
+  }
+  return out;
+}
 function paintGroups(items, emptyText) {
   currentItems = items; renderCard = upcomingCard; renderDetail = upcomingDetail;
   const term = ($("search").value || "").trim().toLowerCase();
@@ -589,29 +611,16 @@ function crossView(up, rows, kind, route) {
   tabsRows($("tabs"), rows, route, (id) => go(["sports", id], null));
   $("subtabs").innerHTML = "";
   chips([], [], () => {});
-  const name = { live: "Live Now", finished: "Finished", today: "Today" }[kind];
-  heading("sports", [name, "All sports"]);
-  note({ live: "Every game being played right now, across all sports, from ESPN's live scores.",
-    finished: "Every game finished in the last 24 hours, across all sports, with final scores.",
-    today: "Everything on today across all sports: still to come, live and finished, marked on each." }[kind]
+  sportStrip(null);
+  heading("sports", [{ finished: "Finished", today: "Today" }[kind], "All sports"]);
+  note({ finished: "Every game that finished in the last 24 hours, across all sports, newest first. Final scores come with the daily update at 12:00 noon Kuwait time, so a game that ended after it shows its score from the next update.",
+    today: "Everything on today across all sports, by start time. A game is marked 🔴 On now from its start time until its usual length has passed, and ✅ when it's over. Final scores come with the daily update at 12:00 noon Kuwait time." }[kind]
     + " Grouped by sport. Times are shown in your time zone.");
-  const upcomingToday = up.events.filter(isToday).sort((a, b) => String(a.when).localeCompare(String(b.when)));
-  const emptyText = { live: "Nothing is being played right now.", finished: "No games finished in the last 24 hours.", today: "Nothing scheduled today." }[kind];
-  paintGroups(kind === "today" ? upcomingToday : [], "Loading live scores…");
-  const token = location.hash;
-  Promise.all(GROUP_HEADS.map(([g]) => liveOverlay(g, "", up.events.filter((e) => groupOf(e) === g)))).then((res) => {
-    if (location.hash !== token) return;
-    const live = res.flatMap((r) => r.live), finished = res.flatMap((r) => r.finished);
-    let list;
-    if (kind === "live") list = live;
-    else if (kind === "finished") list = finished;
-    else {
-      const started = new Set([...live, ...finished].map((e) => `${e.league}|${e.title}`));
-      list = [...live.filter(isToday), ...finished.filter(isToday),
-        ...upcomingToday.filter((e) => !started.has(`${e.league}|${e.title}`))].sort((a, b) => String(a.when).localeCompare(String(b.when)));
-    }
-    paintGroups(list, emptyText);
-  }).catch(() => paintGroups(kind === "today" ? upcomingToday : [], emptyText));
+  const all = withState(up), dayAgo = Date.now() - 24 * 3600e3;
+  const list = kind === "finished"
+    ? all.filter((e) => e.status === "finished" && e.ended >= dayAgo).sort((a, b) => String(b.when).localeCompare(String(a.when)))
+    : all.filter(isToday).sort((a, b) => String(a.when).localeCompare(String(b.when)));
+  paintGroups(list, { finished: "No games finished in the last 24 hours.", today: "Nothing scheduled today." }[kind]);
   return ["sports", route];
 }
 const SOCCER = new Set(["Premier League", "La Liga", "Bundesliga", "Champions League", "Serie A"]);
@@ -621,40 +630,60 @@ const GROUP_NOTE = {
   football: "Every upcoming game across all the football leagues, soonest first: the next 7 days (a league with no game this week shows its next round).",
   nba: "Every NBA game in the next 7 days, soonest first.", nhl: "Every NHL game in the next 7 days, soonest first.",
   nfl: "Every NFL game in the next 7 days, soonest first.", mlb: "Every MLB game in the next 7 days, soonest first.",
-  more: "Every event in the next 30 days across F1, NASCAR, UFC, boxing (ESPN's boxing schedule, all promoters), IPL cricket, snooker and pool, soonest first.",
+  more: "Every event in the next 30 days for the sports named above, soonest first, with each sport's name over its events. Boxing comes from ESPN's boxing schedule (all promoters).",
 };
+// The sports in a mixed list, named in a clear row right above the explanation box (owner, 9 Nov 2026).
+// Each name filters the list to that sport; an off-season one is shown greyed with "off-season".
+function sportStrip(info) {
+  let el = $("sportStrip");
+  if (!el) { el = document.createElement("div"); el.id = "sportStrip"; el.className = "sport-strip"; $("note").before(el); }
+  if (!info) { el.innerHTML = ""; el.hidden = true; return; }
+  const { leagues, counts, icons, league, route } = info;
+  el.hidden = false;
+  el.innerHTML = `<div class="sport-strip-title">Sports in this list</div><div class="sport-strip-row">` +
+    [["", "🏁 All sports", Object.values(counts).reduce((a, b) => a + b, 0)], ...leagues.map((l) => [l, `${icons[l] || ""} ${l}`, counts[l] || 0])]
+      .map(([id, lbl, n]) => `<button class="sport-pill${id === league ? " on" : ""}${n ? "" : " off"}" data-id="${esc(id)}" aria-pressed="${id === league}">${esc(lbl)} <span>${n ? n : "off-season"}</span></button>`).join("") + `</div>`;
+  el.onclick = (ev) => {
+    const b = ev.target.closest("button[data-id]");
+    if (!b) return;
+    const n = new URLSearchParams(); n.set("league", b.dataset.id); go(["sports", route], n, true);
+  };
+}
 function upcomingView(up, rows, q, group, route) {
   const title = (UPCOMING_TABS.find(([, , g]) => g === group) || UPCOMING_TABS[0])[1].replace(/^\S+\s/, "");
   const groupLeagues = ((up.groups && up.groups[group]) || up.leagues.filter((l) => leagueGroup(l) === group));
-  // the league pick is remembered per list (owner: sticky league filters), a ?league= link still wins
+  // only games still to come; anything that has started is under Today / Finished
+  const ahead = withState(up).filter((e) => !e.status && groupOf(e) === group);
+  const counts = {}, icons = {};
+  for (const e of ahead) { counts[e.league] = (counts[e.league] || 0) + 1; icons[e.league] = e.icon; }
+  for (const e of up.events) icons[e.league] = icons[e.league] || e.icon;
+  Object.assign(icons, { IPL: "🏏", NASCAR: "🏁", ...icons });
+  // the league pick is remembered per list (owner: sticky league filters), a ?league= link still wins;
+  // a remembered league with nothing scheduled is dropped, so the list never opens empty on its own
   const memKey = `upcoming-league-${group}`;
   let remembered = "";
   try { remembered = localStorage.getItem(memKey) || ""; } catch {}
-  const asked = q.has("league") ? q.get("league") : remembered;
+  const asked = q.has("league") ? q.get("league") : (counts[remembered] ? remembered : "");
   const league = groupLeagues.includes(asked) ? asked : "";
   try { localStorage.setItem(memKey, league); } catch {}
   tabsRows($("tabs"), rows, route, (id) => go(["sports", id], null));
   $("subtabs").innerHTML = "";
-  if (groupLeagues.length > 1) {
-    chips([["", group === "more" ? "All sports" : "All leagues"], ...groupLeagues.map((l) => [l, l])], [league], (id) => {
+  const multi = groupLeagues.length > 1;
+  if (multi && group !== "more") {
+    chips([["", "All leagues"], ...groupLeagues.map((l) => [l, l])], [league], (id) => {
       const n = new URLSearchParams(); n.set("league", id); go(["sports", route], n, true);
     });
     $("filters").classList.add("sticky");   // stays pinned under the header while scrolling the long list
   } else {
-    chips([], [], () => {});   // a single-league tab needs no filter row
+    chips([], [], () => {});   // single-league tabs need no filter; More Sports uses the sport row above the box
   }
-  const inGroup = (e) => groupOf(e) === group;
-  const list = up.events.filter((e) => inGroup(e) && (!league || e.league === league)).slice().sort((a, b) => String(a.when).localeCompare(String(b.when)));
-  heading("sports", [title, league || (groupLeagues.length > 1 ? (group === "more" ? "All sports" : "All leagues") : "")].filter(Boolean));
+  sportStrip(group === "more" ? { leagues: groupLeagues, counts, icons, league, route } : null);
+  const list = ahead.filter((e) => !league || e.league === league).sort((a, b) => String(a.when).localeCompare(String(b.when)));
+  heading("sports", [title, league || (multi ? (group === "more" ? "All sports" : "All leagues") : "")].filter(Boolean));
   const off = up.off_season.filter((l) => groupLeagues.includes(l) && (!league || l === league));
-  note(GROUP_NOTE[group] + " Split into today, this week and this month; live games and results are under Live Now and Finished. Times are shown in your time zone." + (off.length ? ` Nothing scheduled yet (off-season or not announced): ${off.join(", ")}.` : ""));
+  note(GROUP_NOTE[group] + " Split into today, this week and this month; games already under way are under Today, results under Finished. Times are shown in your time zone." + (off.length ? ` Nothing scheduled yet (off-season or not announced): ${off.join(", ")}.` : ""));
   const emptyText = league ? `No ${league} events announced yet (off-season).` : "No upcoming events yet.";
-  paintStatus([], list, [], emptyText);
-  // live scores + results straight from ESPN in the browser (the data file updates once a day)
-  const token = location.hash;
-  liveOverlay(group, league, list).then(({ live, upcoming, finished }) => {
-    if (location.hash === token) paintStatus(live, upcoming, finished, emptyText);
-  }).catch(() => {});
+  paintStatus(list, emptyText, group === "more" && !league);
   if (league) {   // every league keeps its ticket link, even with nothing scheduled
     const t = (up.tickets || {})[league], w = (up.watch || {})[league];
     const n = $("note");
@@ -667,75 +696,34 @@ function upcomingView(up, rows, q, group, route) {
   }
   return ["sports", route];
 }
-// ---- Live / Upcoming / Finished (owner, 8 Nov 2026) ----
-const ESPN_LIVE = {
-  "Premier League": ["soccer/eng.1", "⚽"], "La Liga": ["soccer/esp.1", "⚽"], "Bundesliga": ["soccer/ger.1", "⚽"],
-  "Champions League": ["soccer/uefa.champions", "⚽"], "Serie A": ["soccer/ita.1", "⚽"],
-  "NBA": ["basketball/nba", "🏀"], "NFL": ["football/nfl", "🏈"], "NHL": ["hockey/nhl", "🏒"], "MLB": ["baseball/mlb", "⚾"],
-  "UFC": ["mma/ufc", "🥋"], "Formula 1": ["racing/f1", "🏎️"], "NASCAR": ["racing/nascar-premier", "🏁"],
-};
-const liveCache = {};
-const ymd = (d) => d.toISOString().slice(0, 10).replace(/-/g, "");
-function espnBoard(path) {
-  const hit = liveCache[path];
-  if (hit && Date.now() - hit.at < 60000) return hit.p;
-  // ESPN refuses date ranges for some leagues, so yesterday and today are asked for one day at a time
-  const now = Date.now(), days = [...new Set([ymd(new Date(now - 864e5)), ymd(new Date(now))])];
-  const one = (day) => fetch(`https://site.api.espn.com/apis/site/v2/sports/${path}/scoreboard?dates=${day}`)
-    .then((r) => (r.ok ? r.json() : { events: [] })).then((d) => d.events || []).catch(() => []);
-  const p = Promise.all(days.map(one)).then((lists) => {
-    const seen = new Set();
-    return lists.flat().filter((e) => (seen.has(e.id) ? false : seen.add(e.id)));
-  });
-  liveCache[path] = { at: Date.now(), p };
-  return p;
-}
-function espnItem(league, icon, e) {
-  const c = (e.competitions || [{}])[0], st = (e.status || {}).type || {};
-  const teams = c.competitors || [];
-  const home = teams.find((t) => t.homeAway === "home") || teams[0] || {}, away = teams.find((t) => t.homeAway === "away") || teams[1] || {};
-  const nm = (t) => (t.team || {}).shortDisplayName || (t.team || {}).displayName || (t.athlete || {}).displayName || "";
-  const score = teams.length === 2 && home.score != null && away.score != null ? `${nm(home)} ${home.score} – ${away.score} ${nm(away)}` : "";
-  return { id: `espn-${e.id}`, league, icon, title: e.name, when: e.date, venue: (c.venue || {}).fullName,
-    image: ((home.team || {}).logo), image2: ((away.team || {}).logo), url: ((e.links || [{}])[0] || {}).href, source: "ESPN",
-    status: st.state === "in" ? "live" : "finished", score, clock: st.shortDetail || st.detail || "" };
-}
-async function liveOverlay(group, league, list) {
-  const leagues = Object.keys(ESPN_LIVE).filter((l) => leagueGroup(l) === group && (!league || l === league));
-  const boards = await Promise.all(leagues.map((l) => espnBoard(ESPN_LIVE[l][0]).then((evs) => evs.map((e) => [l, e]))));
-  const cutoff = Date.now() - 30 * 3600e3;
-  const live = [], finished = [], started = new Set();
-  for (const [l, e] of boards.flat()) {
-    const state = ((e.status || {}).type || {}).state;
-    if (state === "in") { live.push(espnItem(l, ESPN_LIVE[l][1], e)); started.add(`${l}|${e.name}`); }
-    else if (state === "post" && Date.parse(e.date) >= cutoff) { finished.push(espnItem(l, ESPN_LIVE[l][1], e)); started.add(`${l}|${e.name}`); }
-  }
-  const soonGone = Date.now() - 4 * 3600e3;   // a game whose start passed hours ago is no longer "upcoming"
-  const upcoming = list.filter((e) => !started.has(`${e.league}|${e.title}`) && !(Date.parse(e.when) < soonGone));
-  return { live: live.sort((a, b) => String(a.when).localeCompare(String(b.when))), upcoming,
-    finished: finished.sort((a, b) => String(b.when).localeCompare(String(a.when))) };
-}
-// Live, today, this week, this month, later (clearly dated), then results -- each with its own heading,
-// the same for every league and sport (owner, 8 Nov 2026)
-function paintStatus(live, upcoming, finished, emptyText) {
+// Today, this week, this month -- each with its own heading (owner, 8 Nov 2026). In More Sports every
+// section is split again by sport, each sport's name as a heading over its events (owner, 9 Nov 2026).
+function paintStatus(upcoming, emptyText, bySport) {
   const now = new Date(), t = (e) => Date.parse(e.when);
   const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
   const weekEnd = now.getTime() + 7 * 864e5, monthEnd = now.getTime() + 30 * 864e5;
   // a date-only event (no time announced) belongs to its calendar day, read in UTC like the source gives it
   const dayOf = (e) => (e.date_only ? Date.UTC(...e.when.slice(0, 10).split("-").map((n, i) => (i === 1 ? n - 1 : +n))) : t(e));
-  const today = upcoming.filter((e) => (e.date_only ? e.when.slice(0, 10) === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}` : t(e) < endOfToday));
+  const today = upcoming.filter((e) => (e.date_only ? e.when.slice(0, 10) === localDay(now) : t(e) < endOfToday));
   const rest = upcoming.filter((e) => !today.includes(e));
   const thisWeek = rest.filter((e) => !(dayOf(e) > weekEnd));
   const thisMonth = rest.filter((e) => dayOf(e) > weekEnd && !(dayOf(e) > monthEnd));
-  const later = rest.filter((e) => dayOf(e) > monthEnd);
-  const all = [...today, ...thisWeek, ...thisMonth];   // live/finished have their own tabs; nothing past a month (owner)
+  const all = [...today, ...thisWeek, ...thisMonth];   // nothing past a month (owner)
   currentItems = all; renderCard = upcomingCard; renderDetail = upcomingDetail;
   const term = ($("search").value || "").trim().toLowerCase();
   const keep = (arr) => (term ? arr.filter((it) => JSON.stringify(it).toLowerCase().includes(term)) : arr);
   const parts = [["today", "📍 Today", keep(today)], ["week", "📅 This week", keep(thisWeek)], ["month", "🗓️ This month", keep(thisMonth)]];
   if (!parts.some(([, , a]) => a.length)) return empty(term ? `Nothing here matches “${term}”.` : emptyText);
+  const cards = (a) => {
+    if (!bySport) return a.map(upcomingCard).join("");
+    const order = [...new Set(a.map((e) => e.league))];
+    return order.map((l) => {
+      const b = a.filter((e) => e.league === l);
+      return `<h3 class="sport-head">${esc(b[0].icon)} ${esc(l)} <span>${b.length}</span></h3>` + b.map(upcomingCard).join("");
+    }).join("");
+  };
   $("content").innerHTML = parts.filter(([, , a]) => a.length).map(([cls, label, a]) =>
-    `<h2 class="status-head status-${cls}">${label} <span>${a.length}</span></h2>` + a.map(upcomingCard).join("")).join("");
+    `<h2 class="status-head status-${cls}">${label} <span>${a.length}</span></h2>` + cards(a)).join("");
 }
 const daysAway = (when) => Math.round((Date.parse(when) - Date.now()) / 864e5);
 
@@ -748,8 +736,8 @@ function upcomingCard(e) {
     ? `<div class="vs-logos">${img(e.image2, "vs-logo", "")}<span>vs</span>${img(e.image, "vs-logo", "")}</div>`
     : e.image ? `<div class="vs-logos">${img(e.image, "vs-logo wide", "")}</div>` : "";
   const d = daysAway(e.when);
-  const pill = e.status === "live" ? `<span class="badge st-live">🔴 LIVE${e.clock ? " · " + esc(e.clock) : ""}</span>`
-    : e.status === "finished" ? `<span class="badge st-done">✅ Final</span>`
+  const pill = e.status === "live" ? `<span class="badge st-live">🔴 On now${e.clock ? " · " + esc(e.clock) : ""}</span>`
+    : e.status === "finished" ? `<span class="badge st-done">✅ ${e.score ? "Final" : "Ended · score with the next noon update"}</span>`
     : d > 7 ? `<span class="badge st-later">📆 In ${d} days</span>` : "";
   const score = e.score ? `<div class="score">${esc(e.score)}</div>` : "";
   return `<article class="card${e.status ? " card-" + e.status : ""}" tabindex="0" data-item="${esc(e.id)}">${logos}
