@@ -805,8 +805,11 @@ function upcomingDetail(e) {
     ${e.venue ? `<p>Venue: ${esc(e.venue)}</p>` : ""}${e.why ? `<h3>Why it's here</h3><p>${esc(e.why)}</p>` : ""}${ticketLine(e.tickets)}${watchLine(e.watch)}
     ${e.url ? `<p><a href="${esc(e.url)}" target="_blank" rel="noopener">Details on ${esc(e.source)}</a></p>` : ""}</div>`;
 }
+// video length on the picture, like YouTube (owner, 9 Nov 2026)
+const clockLen = (s) => (s ? (s >= 3600 ? `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).padStart(2, "0")}` : Math.floor(s / 60)) + `:${String(s % 60).padStart(2, "0")}` : "");
 function highlightCard(v) {
-  return `<article class="card" tabindex="0" data-item="${esc(v.youtube_id)}">${img(`https://i.ytimg.com/vi/${v.youtube_id}/hqdefault.jpg`, "thumb", "")}
+  const len = clockLen(v.duration);
+  return `<article class="card" tabindex="0" data-item="${esc(v.youtube_id)}"><div class="thumbwrap">${img(`https://i.ytimg.com/vi/${v.youtube_id}/hqdefault.jpg`, "thumb", "")}${len ? `<span class="dur" aria-label="Length ${esc(len)}">${esc(len)}</span>` : ""}</div>
     <div class="body"><h3 class="title">${esc(v.title)}</h3><div class="meta">${esc(v.channel)} · ${kuwait(v.published, false)} (${ago(v.published)}) · ${num(v.views)} views</div>
     ${v.league ? `<div class="badges"><span class="badge">${esc(v.league)}</span></div>` : ""}</div></article>`;
 }

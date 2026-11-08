@@ -290,17 +290,34 @@ def _channel_ids(yt: YouTube, handles: list[str]) -> dict[str, str]:
     return out
 
 
+# video length in seconds (owner, 9 Nov 2026: shown on each highlight's picture). It comes in the same
+# videos call as the view count (contentDetails), so it costs no extra quota.
+_durations: dict[str, int] = {}
+_ISO_DUR = re.compile(r"P(?:(\d+)D)?T?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?")
+
+
+def _seconds(iso: str | None) -> int | None:
+    m = _ISO_DUR.fullmatch(iso or "")
+    if not m or not any(m.groups()):
+        return None
+    d, h, mi, se = (int(x or 0) for x in m.groups())
+    return ((d * 24 + h) * 60 + mi) * 60 + se
+
+
 def _views(yt: YouTube, ids: list[str]) -> dict[str, int]:
     views = {}
     for i in range(0, len(ids), 50):
         try:
-            data = yt.get("videos", {"part": "statistics", "id": ",".join(ids[i:i + 50])})
+            data = yt.get("videos", {"part": "statistics,contentDetails", "id": ",".join(ids[i:i + 50])})
             yt.units += 1
         except common.FetchError as exc:
             common.log(f"youtube stats: {exc}")
             continue
         for item in data.get("items", []):
             views[item["id"]] = int(item.get("statistics", {}).get("viewCount", 0))
+            secs = _seconds((item.get("contentDetails") or {}).get("duration"))
+            if secs:
+                _durations[item["id"]] = secs
     return views
 
 
@@ -387,7 +404,7 @@ def build(ai=None, yt: YouTube | None = None) -> dict:
 
         def hl_card(v, why=None):
             card = embed(v)
-            card.update(views=views.get(v["id"]), league=v["league"],
+            card.update(views=views.get(v["id"]), league=v["league"], duration=_durations.get(v["id"]),
                         why=why or f"{views.get(v['id'], 0):,} views on the official {v['channel']} channel")
             return card
 

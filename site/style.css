@@ -201,3 +201,7 @@ table.mini td, table.mini th { border-bottom: 1px solid var(--line); padding: 5p
 .sport-head { grid-column: 1 / -1; margin: 10px 0 0; font-size: 15px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
 .sport-head span { font-size: 12px; font-weight: 600; color: var(--muted); }
 .tabrow-title { align-self: stretch; width: 100%; text-align: center; font-size: 13px; font-weight: 700; letter-spacing: .02em; color: var(--muted); margin: 8px 0 2px; }
+/* highlight video length on the picture (owner, 9 Nov 2026) */
+.thumbwrap { position: relative; }
+.thumbwrap .thumb { display: block; }
+.dur { position: absolute; right: 8px; bottom: 8px; padding: 2px 7px; border-radius: 6px; background: rgba(0, 0, 0, .82); color: #fff; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
