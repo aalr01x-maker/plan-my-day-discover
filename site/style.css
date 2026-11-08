@@ -204,4 +204,4 @@ table.mini td, table.mini th { border-bottom: 1px solid var(--line); padding: 5p
 /* highlight video length on the picture (owner, 9 Nov 2026) */
 .thumbwrap { position: relative; }
 .thumbwrap .thumb { display: block; }
-.dur { position: absolute; right: 8px; bottom: 8px; padding: 2px 7px; border-radius: 6px; background: rgba(0, 0, 0, .82); color: #fff; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.dur { position: absolute; right: 8px; bottom: 8px; padding: 2px 6px; border-radius: 5px; background: rgba(0, 0, 0, .8); color: #fff; font-size: 13px; font-weight: 600; line-height: 1.35; letter-spacing: .02em; font-variant-numeric: tabular-nums; }
