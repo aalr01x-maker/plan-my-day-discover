@@ -76,21 +76,23 @@ TICKETS = {
 }
 # Where to watch (owner, 8 Nov 2026): each league's official watch / broadcasters-by-country page where one
 # exists (rights differ by country); La Liga and Serie A have none, so LiveSoccerTV's per-country listings.
+# Where to watch from Kuwait (owner, 9 Nov 2026): pay per game where it exists, otherwise the most complete
+# official subscription; the payment type is named on the link.
 WATCH = {
-    "Premier League": ("Premier League broadcasters by country", "https://www.premierleague.com/en/media/broadcasters"),
-    "La Liga": ("LiveSoccerTV (by country)", "https://www.livesoccertv.com/competitions/spain/primera-division/"),
-    "Bundesliga": ("Bundesliga: where to watch", "https://www.bundesliga.com/en/faq/where-to-watch-bundesliga"),
-    "Champions League": ("UEFA broadcasters by country", "https://www.uefa.com/uefachampionsleague/news/0253-0d82037aaedd-f371c464f919-1000--where-to-watch-the-uefa-champions-league-tv-broadcast-partners-streams/"),
-    "Serie A": ("LiveSoccerTV (by country)", "https://www.livesoccertv.com/competitions/italy/serie-a/"),
-    "NBA": ("NBA League Pass", "https://www.nba.com/watch/league-pass-stream"),
-    "NFL": ("NFL+ / Game Pass", "https://www.nfl.com/plus/"),
-    "NHL": ("NHL: how to watch", "https://www.nhl.com/info/how-to-watch-and-stream-nhl-games"),
-    "MLB": ("MLB.TV", "https://www.mlb.com/tv"),
-    "UFC": ("UFC Fight Pass", "https://ufcfightpass.com/"),
-    "Formula 1": ("F1 TV", "https://f1tv.formula1.com/"),
-    "NASCAR": ("NASCAR: where to watch", "https://www.nascar.com/where-to-watch/"),
+    "Premier League": ("TOD (subscription)", "https://www.tod.tv/"),
+    "La Liga": ("TOD (subscription)", "https://www.tod.tv/"),
+    "Bundesliga": ("TOD (subscription)", "https://www.tod.tv/"),
+    "Champions League": ("TOD (subscription)", "https://www.tod.tv/"),
+    "Serie A": ("TOD (subscription)", "https://www.tod.tv/"),
+    "NBA": ("NBA League Pass (pay per game)", "https://www.nba.com/watch"),
+    "NFL": ("NFL Game Pass on DAZN (subscription)", "https://www.dazn.com/"),
+    "NHL": ("NHL.TV / DAZN (subscription)", "https://www.dazn.com/"),
+    "MLB": ("MLB.TV (subscription)", "https://www.mlb.com/live-stream-games"),
+    "UFC": ("STARZPLAY (subscription)", "https://starzplay.com/"),
+    "Formula 1": ("TOD (subscription)", "https://www.tod.tv/"),
+    "NASCAR": ("NASCAR: how to watch abroad", "https://www.nascar.com/international/how-to-watch"),
     "IPL": ("IPL (iplt20.com)", "https://www.iplt20.com/"),
-    "Snooker": ("WST: where to watch", "https://www.wst.tv/where-to-watch"),
+    "Snooker": ("WST Play (subscription)", "https://play.wst.tv/"),
     "Pool / Billiards": ("World Nine-ball Tour", "https://worldnineballtour.com/"),
 }
 # Boxing: the channel ESPN names for each card, linked when it's one we know the official site of
@@ -153,7 +155,8 @@ def _espn_boxing(league: str, story_id: str, now) -> list[dict]:
         first = next((n for n in BOX_CHANNELS if n.lower() in tv.lower()), None)
         ev = {"league": league, "title": bout, "when": common.iso(c["when"]), "venue": c["place"], "date_only": True,
               "image": None, "url": "https://www.espn.com/boxing/story/_/id/12508267/boxing-schedule", "why": why}
-        ev["watch"] = {"name": tv, "url": BOX_CHANNELS[first] if first else None} if tv else {"name": "not announced yet", "url": None}
+        ev["watch"] = ({"name": tv, "url": BOX_CHANNELS[first] if first else None} if tv
+                       else {"name": "DAZN (subscription; this card's channel not announced yet)", "url": "https://www.dazn.com/"})
         out.append(ev)
     return _next_30_days(out, now, days=60)   # big fights are announced weeks ahead
 
