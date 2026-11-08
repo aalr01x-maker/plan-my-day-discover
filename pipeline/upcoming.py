@@ -12,6 +12,7 @@ A league with nothing announced says so (off-season) instead of being dropped.
 """
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -38,8 +39,8 @@ LEAGUES = [
     ("MLB", "⚾", "espn", "baseball/mlb", "games"),
     ("NHL", "🏒", "espn", "hockey/nhl", "games"),
     ("Boxing", "🥊", "espnbox", "12508267", "events"),   # ESPN's weekly-updated boxing schedule (all promoters)
-    ("Snooker", "🎱", "tsdb", "4555", "events"),
-    ("Pool / Billiards", "🎱", "tsdb", "search:Mosconi Cup|World Pool Championship|9-Ball", "events"),
+    ("Snooker", "🎱", "wikisnooker", "4555", "events"),        # Wikipedia's season calendar (World Snooker Tour, from WST)
+    ("Pool / Billiards", "🎱", "wnt", "search:Mosconi Cup|World Pool Championship|9-Ball", "events"),   # World Nineball Tour
 ]
 PER_LEAGUE = 3
 
@@ -136,8 +137,13 @@ def _espn_boxing(league: str, story_id: str, now) -> list[dict]:
             cur["fights"].append({"text": l, "title": title_next or " for " in l and "title" in l})
         title_next = False
     out = []
+    major_tv = ("DAZN", "Netflix", "Prime Video", "Paramount+", "ESPN", "TNT", "Sky", "Fox", "Showtime")
     for c in cards:
         if c["when"] + timedelta(days=1) < now or not c["fights"]:   # dates only: today's card stays all day
+            continue
+        # known cards only (owner, 8 Nov 2026): a world title fight or a major platform; small local shows left out
+        world_title = any(f["title"] and re.search(r"\b(WBC|WBA|IBF|WBO)\b", f["text"]) for f in c["fights"])
+        if not world_title and not any(t.lower() in c["tv"].lower() for t in major_tv):
             continue
         main = c["fights"][0]["text"]
         bout = main.split(",")[0]
@@ -150,6 +156,119 @@ def _espn_boxing(league: str, story_id: str, now) -> list[dict]:
         ev["watch"] = {"name": tv, "url": BOX_CHANNELS[first] if first else None} if tv else {"name": "not announced yet", "url": None}
         out.append(ev)
     return _next_30_days(out, now, days=60)   # big fights are announced weeks ahead
+
+
+WIKI_UA = {"User-Agent": "PlanMyDayDiscover/1.0 (personal schedule site; github.com/aalr01x-maker)"}
+
+
+def _wiki_clean(cell: str) -> str:
+    import re
+    cell = re.sub(r"<ref[^>]*/>|<ref.*?</ref>", "", cell, flags=re.S)
+    cell = re.sub(r"<sup>.*?</sup>|<[^>]+>", "", cell, flags=re.S)   # footnote marks like † and other tags
+    cell = cell.replace("{{nbsp}}", " ").replace("&nbsp;", " ")
+    cell = re.sub(r"\{\{flagathlete\|(.*?)\|[A-Z]{3}\}\}", r"\1", cell)
+    cell = re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]*)\]\]", r"\1", cell)
+    cell = re.sub(r"\{\{[^}]*\}\}", "", cell)
+    cell = re.sub(r"^\s*style=\"[^\"]*\"\s*\|", "", cell)
+    return re.sub(r"\s+", " ", cell).strip()
+
+
+def _wiki_snooker(league: str, now) -> list[dict]:
+    """The main World Snooker Tour calendar from Wikipedia's season page (sourced from WST): ranking events and
+    the big invitationals only, no women's / seniors / Q Tour (owner: known events only)."""
+    import re
+    y = now.year if now.month >= 6 else now.year - 1
+    page = f"{y}–{(y + 1) % 100:02d} snooker season"
+    try:
+        d = common.get("https://en.wikipedia.org/w/api.php", params={"action": "parse", "page": page, "prop": "wikitext",
+                                                                     "format": "json", "formatversion": 2}, headers=WIKI_UA) or {}
+    except common.FetchError as exc:
+        common.log(f"upcoming snooker: {exc}")
+        return []
+    w = (d.get("parse") or {}).get("wikitext") or ""
+    i = w.find("===World Snooker Tour===")
+    if i < 0:
+        return []
+    table = w[i:w.find("|}", i)]
+    out = []
+    for row in table.split("|-")[1:]:
+        cells = [_wiki_clean(c) for c in re.split(r"\n\|(?!\})", "\n" + row.split("\n", 1)[-1])[1:]]
+        if len(cells) < 4:
+            continue
+        def day(txt):
+            m = re.match(r"(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)", txt)
+            if not m:
+                return None
+            mon = MONTHS[m.group(2)]
+            return datetime(y if mon >= 6 else y + 1, mon, int(m.group(1)), tzinfo=timezone.utc)
+        start, finish = day(cells[0]), day(cells[1])
+        if not start or not finish or finish + timedelta(days=1) < now:
+            continue
+        name, venue = cells[2], cells[3]
+        live = start <= now
+        out.append({"league": league, "title": name, "when": common.iso(start), "venue": venue, "date_only": True,
+                    "image": None, "url": "https://www.wst.tv/tournaments/",
+                    "why": f"World Snooker Tour, {start:%d %b} – {finish:%d %b}" + (" (in progress)" if live else "") + "."})
+    return _next_30_days(out, now)
+
+
+def _wnt_pool(league: str, now) -> list[dict]:
+    """The World Nineball Tour's own event pages (the top pro pool tour, incl. the Mosconi Cup)."""
+    import html as _html
+    import re
+    base = "https://worldnineballtour.com"
+    try:
+        home = common.get(base + "/", as_json=False, headers={"User-Agent": "Mozilla/5.0 (compatible; PlanMyDayDiscover/1.0)"}) or ""
+    except common.FetchError as exc:
+        common.log(f"upcoming pool: {exc}")
+        return []
+    slugs = sorted(set(re.findall(r'href="https://worldnineballtour\.com/events/([a-z0-9-]+)/"', home)))
+    mon = "January|February|March|April|May|June|July|August|September|October|November|December"
+    full = {m: i for i, m in enumerate(mon.split("|"), 1)}
+    out = []
+    for slug in slugs[:12]:
+        try:
+            page = common.get(f"{base}/events/{slug}/", as_json=False, headers={"User-Agent": "Mozilla/5.0 (compatible; PlanMyDayDiscover/1.0)"}) or ""
+        except common.FetchError:
+            continue
+        text = _html.unescape(re.sub(r"<[^>]+>", " ", re.sub(r"<script.*?</script>|<style.*?</style>", "", page, flags=re.S)))
+        text = re.sub(r"\s+", " ", text)
+        # only the event's own date lines -- never promo text elsewhere on the page (a "3-6 December" promo
+        # once put the Mosconi Cup on the wrong dates; it's 27-30 November)
+        m = (re.search(rf"({mon}) (\d{{1,2}}) ?[-–] ?(\d{{1,2}}),? (20\d\d)", text)
+             or re.search(rf"(20\d\d) edition takes place from (\d{{1,2}})[–-](\d{{1,2}}) ({mon})", text)
+             or re.search(rf"[Tt]ak(?:ing|es) place from (\d{{1,2}})[–-](\d{{1,2}}) ({mon}),? (20\d\d)", text))
+        if not m:
+            continue
+        g = m.groups()
+        if g[0] in full:
+            month, d1, d2, year = full[g[0]], int(g[1]), int(g[2]), int(g[3])
+        elif g[2] in full:
+            d1, d2, month, year = int(g[0]), int(g[1]), full[g[2]], int(g[3])
+        else:
+            year, d1, d2, month = int(g[0]), int(g[1]), int(g[2]), full[g[3]]
+        try:
+            start = datetime(year, month, d1, tzinfo=timezone.utc)
+            finish = datetime(year, month, d2, tzinfo=timezone.utc) if d2 >= d1 else start + timedelta(days=d2)
+        except ValueError:
+            continue
+        if finish + timedelta(days=1) < now:
+            continue
+        tm = re.search(r'<meta property="og:title" content="([^"]+)"', page)
+        title = _html.unescape(tm.group(1)).split(" - ")[0].split(" | ")[0].strip() if tm else slug.replace("-", " ").title()
+        # venue: the header block "<dates> <event name> <venue, city, country> Summary", else "... at <venue> in ..."
+        venue = None
+        head_end = text.find(" Summary", m.end())
+        if 0 < head_end - m.end() < 200 and title in text[m.end():head_end]:
+            venue = text[m.end():head_end].split(title, 1)[1].strip() or None
+        if not venue:
+            vm = re.search(r" at ([A-Z][^.,;]{3,60}?)(?: in [A-Z][^.,;]{2,40})?(?: from|,|\.)", text)
+            venue = vm.group(1).strip() if vm else None
+        out.append({"league": league, "title": title, "when": common.iso(start), "venue": venue,
+                    "date_only": True, "image": None, "url": f"{base}/events/{slug}/",
+                    "why": f"World Nineball Tour event, {start:%d %b} – {finish:%d %b %Y}."})
+        time.sleep(0.5)
+    return _next_30_days(out, now)
 
 
 WIKIDATA = "https://www.wikidata.org/w/api.php"
@@ -344,6 +463,10 @@ def build(now=None) -> dict:
     for league, icon, source, ref, kind in LEAGUES:
         if source == "espn":
             got = _espn_games(league, ref, now) if kind == "games" else _espn_events(league, ref, now)
+        elif source == "wikisnooker":
+            got = _wiki_snooker(league, now) or _tsdb(league, ref, now)
+        elif source == "wnt":
+            got = _wnt_pool(league, now) or _tsdb(league, ref, now)
         elif source == "espnbox":
             got = _espn_boxing(league, ref, now) or _tsdb(league, "4445", now)   # TheSportsDB if ESPN's page changes
         else:
@@ -360,7 +483,7 @@ def build(now=None) -> dict:
             if "watch" not in g and WATCH.get(league):
                 g["watch"] = {"name": WATCH[league][0], "url": WATCH[league][1]}
             events.append({**g, "id": common.fingerprint(f"{league}|{g['title']}|{g['when']}"), "icon": icon,
-                           "rank": i + 1, "source": "ESPN" if source in ("espn", "espnbox") else "TheSportsDB",
+                           "rank": i + 1, "source": {"espn": "ESPN", "espnbox": "ESPN", "wikisnooker": "Wikipedia (WST)", "wnt": "World Nineball Tour"}.get(source, "TheSportsDB"),
                            "group": _group(league, ref)})
         if not got:
             empty.append(league)
