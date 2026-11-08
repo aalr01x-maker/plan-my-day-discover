@@ -250,6 +250,15 @@ def _tsdb(league: str, ids: str, now) -> list[dict]:
     return _next_30_days(out, now)
 
 
+# Upcoming tabs (owner, 8 Nov 2026): football together, each big US league on its own (each is about
+# football-sized in season), everything else together.
+GROUP_OF = {"NBA": "nba", "NHL": "nhl", "NFL": "nfl", "MLB": "mlb"}
+
+
+def _group(league: str, ref: str) -> str:
+    return "football" if ref.startswith("soccer/") else GROUP_OF.get(league, "more")
+
+
 def build(now=None) -> dict:
     now = now or common.now_utc()
     events, empty = [], []
@@ -269,12 +278,12 @@ def build(now=None) -> dict:
                 g["tickets"] = {"name": TICKETS[league][0], "url": TICKETS[league][1]}
             events.append({**g, "id": common.fingerprint(f"{league}|{g['title']}|{g['when']}"), "icon": icon,
                            "rank": i + 1, "source": "ESPN" if source == "espn" else "TheSportsDB",
-                           "group": "football" if ref.startswith("soccer/") else "other"})
+                           "group": _group(league, ref)})
         if not got:
             empty.append(league)
         common.log(f"upcoming {league}: {len(got)}")
     return {"icon": "📅", "name": "Upcoming", "leagues": [l[0] for l in LEAGUES], "events": events,
-            "groups": {"football": [l[0] for l in LEAGUES if l[3].startswith("soccer/")],
-                       "other": [l[0] for l in LEAGUES if not l[3].startswith("soccer/")]},
+            "groups": {g: [l[0] for l in LEAGUES if _group(l[0], l[3]) == g]
+                       for g in ("football", "nba", "nhl", "nfl", "mlb", "more")},
             "tickets": {k: {"name": v[0], "url": v[1]} for k, v in TICKETS.items() if v},
             "off_season": empty, "built_at": common.iso(now)}

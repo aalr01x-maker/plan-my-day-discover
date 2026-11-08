@@ -526,16 +526,23 @@ syncTopHeight();
 async function sports(parts, q) {
   const data = await load("sports");
   const up = data.upcoming;
-  // Owner, 8 Nov 2026: two upcoming lists, every game in time order -- football together, all other sports together
-  const tabs = [...(up ? [["upcoming", "📅 Upcoming Football"], ["upcoming-other", "📅 Upcoming Other Sports"]] : []),
-    ...Object.entries(data.sports).map(([id, s]) => [id, `${s.icon} ${s.name}`])];
-  if (up && (parts[1] === "upcoming" || parts[1] === "upcoming-other" || !parts[1])) return upcomingView(up, tabs, q, parts[1] === "upcoming-other" ? "other" : "football");
+  // Owner, 8 Nov 2026: Upcoming tabs on the top row (football, NBA, NHL, NFL, MLB, more sports; a league out
+  // of season hides its tab), the sport tabs on the row under them, then the league filter.
+  const upTabs = up ? UPCOMING_TABS.filter(([id, , g]) => g === "football" || up.events.some((e) => groupOf(e) === g)) : [];
+  const sportTabs = Object.entries(data.sports).map(([id, s]) => [id, `${s.icon} ${s.name}`]);
+  const rows = [upTabs.map(([id, lbl]) => [id, lbl]), sportTabs];
+  const upPick = upTabs.find(([id]) => id === parts[1]);
+  if (up && (upPick || !parts[1] || !data.sports[parts[1]])) {
+    const [route, , g] = upPick || upTabs[0];
+    return upcomingView(up, rows, q, g, route);
+  }
+  const tabs = [...upTabs, ...sportTabs];
   const sport = data.sports[parts[1]] ? parts[1] : tabs[0]?.[0];
   const s = data.sports[sport];
   let view = SPORT_VIEWS.some(([v]) => v === parts[2]) ? parts[2] : "highlights";   // always first (owner, 3 Nov)
   const league = q.get("league") || "";
   const lq = (l) => { const n = new URLSearchParams(); if (l) n.set("league", l); return n; };
-  tabsRow($("tabs"), tabs, sport, (id) => go(["sports", id], null));
+  tabsRows($("tabs"), rows, sport, (id) => go(["sports", id], null));
   segGroups([{ label: "View", items: SPORT_VIEWS, selected: view, onPick: (id) => go(["sports", sport, id], lq(league)) }]);
   chips([["", "All leagues"], ...s.leagues.map((l) => [l, l])], [league], (id) => go(["sports", sport, view], lq(id), true));
   const lb = league && s.by_league ? s.by_league[league] : null;
@@ -555,11 +562,25 @@ async function sports(parts, q) {
       : "Nothing in this view right now.");
   return ["sports", sport, view];
 }
-// Upcoming (owner, 8 Nov 2026): Football = every game of every football league together; Other Sports = every game
-// and event of all the other leagues together. No top-3 cut; soonest first; a league row filters within the list.
-function upcomingView(up, tabs, q, group) {
-  const route = group === "other" ? "upcoming-other" : "upcoming";
-  const groupLeagues = (up.groups && up.groups[group]) || up.leagues.filter((l) => up.events.some((e) => e.league === l && (e.group || "football") === group));
+// Upcoming (owner, 8 Nov 2026): one list per tab -- every game, soonest first, no top-3 cut.
+const UPCOMING_TABS = [
+  ["upcoming", "📅 Upcoming Football", "football"], ["upcoming-nba", "🏀 Upcoming NBA", "nba"],
+  ["upcoming-nhl", "🏒 Upcoming NHL", "nhl"], ["upcoming-nfl", "🏈 Upcoming NFL", "nfl"],
+  ["upcoming-mlb", "⚾ Upcoming MLB", "mlb"], ["upcoming-more", "🏁 Upcoming More Sports", "more"],
+];
+const GROUP_OF_LEAGUE = { NBA: "nba", NHL: "nhl", NFL: "nfl", MLB: "mlb" };
+const SOCCER = new Set(["Premier League", "La Liga", "Bundesliga", "Champions League", "Serie A"]);
+const leagueGroup = (l) => (SOCCER.has(l) ? "football" : GROUP_OF_LEAGUE[l] || "more");
+const groupOf = (e) => (e.group && e.group !== "other" ? e.group : leagueGroup(e.league));
+const GROUP_NOTE = {
+  football: "Every upcoming game across all the football leagues, soonest first: the next 7 days (a league with no game this week shows its next round).",
+  nba: "Every NBA game in the next 7 days, soonest first.", nhl: "Every NHL game in the next 7 days, soonest first.",
+  nfl: "Every NFL game in the next 7 days, soonest first.", mlb: "Every MLB game in the next 7 days, soonest first.",
+  more: "Every event in the next 30 days across F1, NASCAR, UFC, boxing, IPL cricket, snooker and pool, soonest first.",
+};
+function upcomingView(up, rows, q, group, route) {
+  const title = (UPCOMING_TABS.find(([, , g]) => g === group) || UPCOMING_TABS[0])[1].replace(/^\S+\s/, "");
+  const groupLeagues = ((up.groups && up.groups[group]) || up.leagues.filter((l) => leagueGroup(l) === group));
   // the league pick is remembered per list (owner: sticky league filters), a ?league= link still wins
   const memKey = `upcoming-league-${group}`;
   let remembered = "";
@@ -567,20 +588,21 @@ function upcomingView(up, tabs, q, group) {
   const asked = q.has("league") ? q.get("league") : remembered;
   const league = groupLeagues.includes(asked) ? asked : "";
   try { localStorage.setItem(memKey, league); } catch {}
-  tabsRow($("tabs"), tabs, route, (id) => go(["sports", id], null));
+  tabsRows($("tabs"), rows, route, (id) => go(["sports", id], null));
   $("subtabs").innerHTML = "";
-  chips([["", group === "other" ? "All sports" : "All leagues"], ...groupLeagues.map((l) => [l, l])], [league], (id) => {
-    const n = new URLSearchParams(); n.set("league", id); go(["sports", route], n, true);
-  });
-  $("filters").classList.add("sticky");   // stays pinned under the header while scrolling the long list
-  const inGroup = (e) => (e.group ? e.group === group : groupLeagues.includes(e.league));
+  if (groupLeagues.length > 1) {
+    chips([["", group === "more" ? "All sports" : "All leagues"], ...groupLeagues.map((l) => [l, l])], [league], (id) => {
+      const n = new URLSearchParams(); n.set("league", id); go(["sports", route], n, true);
+    });
+    $("filters").classList.add("sticky");   // stays pinned under the header while scrolling the long list
+  } else {
+    chips([], [], () => {});   // a single-league tab needs no filter row
+  }
+  const inGroup = (e) => groupOf(e) === group;
   const list = up.events.filter((e) => inGroup(e) && (!league || e.league === league)).slice().sort((a, b) => String(a.when).localeCompare(String(b.when)));
-  heading("sports", [group === "other" ? "Upcoming Other Sports" : "Upcoming Football", league || (group === "other" ? "All sports" : "All leagues")]);
+  heading("sports", [title, league || (groupLeagues.length > 1 ? (group === "more" ? "All sports" : "All leagues") : "")].filter(Boolean));
   const off = up.off_season.filter((l) => groupLeagues.includes(l) && (!league || l === league));
-  note((group === "other"
-    ? "Every upcoming game and event across all the other leagues and sports, soonest first. Team leagues: the next 7 days. F1, NASCAR, UFC, boxing, snooker and pool: the next 30 days."
-    : "Every upcoming game across all the football leagues, soonest first: the next 7 days (a league on a break shows its next round).")
-    + " Times are shown in your time zone." + (off.length ? ` Nothing scheduled yet (off-season or not announced): ${off.join(", ")}.` : ""));
+  note(GROUP_NOTE[group] + " Live scores and the last 24 hours' results come straight from ESPN. Times are shown in your time zone." + (off.length ? ` Nothing scheduled yet (off-season or not announced): ${off.join(", ")}.` : ""));
   const emptyText = league ? `No ${league} events announced yet (off-season).` : "No upcoming events yet.";
   paintStatus([], list, [], emptyText);
   // live scores + results straight from ESPN in the browser (the data file updates once a day)
@@ -631,7 +653,7 @@ function espnItem(league, icon, e) {
     status: st.state === "in" ? "live" : "finished", score, clock: st.shortDetail || st.detail || "" };
 }
 async function liveOverlay(group, league, list) {
-  const leagues = Object.keys(ESPN_LIVE).filter((l) => ((group === "football") === ESPN_LIVE[l][0].startsWith("soccer/")) && (!league || l === league));
+  const leagues = Object.keys(ESPN_LIVE).filter((l) => leagueGroup(l) === group && (!league || l === league));
   const boards = await Promise.all(leagues.map((l) => espnBoard(ESPN_LIVE[l][0]).then((evs) => evs.map((e) => [l, e]))));
   const cutoff = Date.now() - 30 * 3600e3;
   const live = [], finished = [], started = new Set();
