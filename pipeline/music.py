@@ -883,7 +883,15 @@ def build(yt: YouTube | None = None) -> dict:
         # Best Recent: the release date alone isn't enough -- MusicBrainz/Deezer often date a live album,
         # reissue or compilation ("Mercy" via "Ye Live in Mexico" 2026), while the YouTube video and its
         # views are the 2012 original. A recent song's official video must also be under ~13 months old.
-        a_rows, r_rows = with_yt(at), [x for x in with_yt(rc) if _posted_since(x["yt"], video_cut)]
+        # Owner, 9 Nov 2026: All Time missed songs with more views than the ones listed ("Wake Me Up" 2.5B,
+        # "Shallow" 1.9B were only in the recent/trending candidates). All Time now ranks every song we
+        # know in the genre -- the all-time, recent and trending candidates together -- by YouTube views.
+        pool = {}
+        for x in at + rc + tr:
+            pool.setdefault(skey(x), x)
+        seen_vid: set = set()   # one entry per YouTube video, even if two candidates point to it
+        a_rows = [x for x in with_yt(list(pool.values())) if not (x["yt"]["id"] in seen_vid or seen_vid.add(x["yt"]["id"]))]
+        r_rows = [x for x in with_yt(rc) if _posted_since(x["yt"], video_cut)]
         max_a = max((x["yt"]["views"] for x in a_rows), default=1)
         max_r = max((x["yt"]["views"] for x in r_rows), default=1)
         # ranked by YouTube alone; genre tags only decide membership
