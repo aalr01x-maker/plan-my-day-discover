@@ -670,16 +670,25 @@ async function liveOverlay(group, league, list) {
   return { live: live.sort((a, b) => String(a.when).localeCompare(String(b.when))), upcoming,
     finished: finished.sort((a, b) => String(b.when).localeCompare(String(a.when))) };
 }
-// Live, then this week, then later rounds (clearly dated), then results -- each with its own heading
+// Live, today, this week, this month, later (clearly dated), then results -- each with its own heading,
+// the same for every league and sport (owner, 8 Nov 2026)
 function paintStatus(live, upcoming, finished, emptyText) {
-  const weekEnd = Date.now() + 7 * 864e5;
-  const thisWeek = upcoming.filter((e) => !(Date.parse(e.when) > weekEnd)), later = upcoming.filter((e) => Date.parse(e.when) > weekEnd);
-  const all = [...live, ...thisWeek, ...later, ...finished];
+  const now = new Date(), t = (e) => Date.parse(e.when);
+  const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  const weekEnd = now.getTime() + 7 * 864e5, monthEnd = now.getTime() + 30 * 864e5;
+  // a date-only event (no time announced) belongs to its calendar day, read in UTC like the source gives it
+  const dayOf = (e) => (e.date_only ? Date.UTC(...e.when.slice(0, 10).split("-").map((n, i) => (i === 1 ? n - 1 : +n))) : t(e));
+  const today = upcoming.filter((e) => (e.date_only ? e.when.slice(0, 10) === `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}` : t(e) < endOfToday));
+  const rest = upcoming.filter((e) => !today.includes(e));
+  const thisWeek = rest.filter((e) => !(dayOf(e) > weekEnd));
+  const thisMonth = rest.filter((e) => dayOf(e) > weekEnd && !(dayOf(e) > monthEnd));
+  const later = rest.filter((e) => dayOf(e) > monthEnd);
+  const all = [...live, ...today, ...thisWeek, ...thisMonth, ...later, ...finished];
   currentItems = all; renderCard = upcomingCard; renderDetail = upcomingDetail;
   const term = ($("search").value || "").trim().toLowerCase();
   const keep = (arr) => (term ? arr.filter((it) => JSON.stringify(it).toLowerCase().includes(term)) : arr);
-  const parts = [["live", "🔴 Live now", keep(live)], ["week", "📅 Upcoming this week", keep(thisWeek)],
-    ["later", "🗓️ Later rounds", keep(later)], ["done", "✅ Finished (last 24 hours)", keep(finished)]];
+  const parts = [["live", "🔴 Live now", keep(live)], ["today", "📍 Today", keep(today)], ["week", "📅 This week", keep(thisWeek)],
+    ["month", "🗓️ This month", keep(thisMonth)], ["later", "🔭 Later", keep(later)], ["done", "✅ Finished (last 24 hours)", keep(finished)]];
   if (!parts.some(([, , a]) => a.length)) return empty(term ? `Nothing here matches “${term}”.` : emptyText);
   $("content").innerHTML = parts.filter(([, , a]) => a.length).map(([cls, label, a]) =>
     `<h2 class="status-head status-${cls}">${label} <span>${a.length}</span></h2>` + a.map(upcomingCard).join("")).join("");
@@ -697,7 +706,7 @@ function upcomingCard(e) {
   const d = daysAway(e.when);
   const pill = e.status === "live" ? `<span class="badge st-live">🔴 LIVE${e.clock ? " · " + esc(e.clock) : ""}</span>`
     : e.status === "finished" ? `<span class="badge st-done">✅ Final</span>`
-    : d > 7 ? `<span class="badge st-later">⏭️ Next round · in ${d} days</span>` : "";
+    : d > 7 ? `<span class="badge st-later">📆 In ${d} days</span>` : "";
   const score = e.score ? `<div class="score">${esc(e.score)}</div>` : "";
   return `<article class="card${e.status ? " card-" + e.status : ""}" tabindex="0" data-item="${esc(e.id)}">${logos}
     <div class="body"><div class="badges"><span class="badge">${esc(e.icon)} ${esc(e.league)}</span>${pill}</div>

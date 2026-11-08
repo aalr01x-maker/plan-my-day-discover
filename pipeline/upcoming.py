@@ -147,8 +147,7 @@ def _espn_boxing(league: str, story_id: str, now) -> list[dict]:
         first = next((n for n in BOX_CHANNELS if n.lower() in tv.lower()), None)
         ev = {"league": league, "title": bout, "when": common.iso(c["when"]), "venue": c["place"], "date_only": True,
               "image": None, "url": "https://www.espn.com/boxing/story/_/id/12508267/boxing-schedule", "why": why}
-        if tv:
-            ev["watch"] = {"name": tv, "url": BOX_CHANNELS[first] if first else None}
+        ev["watch"] = {"name": tv, "url": BOX_CHANNELS[first] if first else None} if tv else {"name": "not announced yet", "url": None}
         out.append(ev)
     return _next_30_days(out, now, days=60)   # big fights are announced weeks ahead
 
