@@ -37,7 +37,7 @@ LEAGUES = [
     ("NASCAR", "🏁", "espn", "racing/nascar-premier", "events"),
     ("MLB", "⚾", "espn", "baseball/mlb", "games"),
     ("NHL", "🏒", "espn", "hockey/nhl", "games"),
-    ("Boxing", "🥊", "tsdb", "4445", "events"),
+    ("Boxing", "🥊", "espnbox", "12508267", "events"),   # ESPN's weekly-updated boxing schedule (all promoters)
     ("Snooker", "🎱", "tsdb", "4555", "events"),
     ("Pool / Billiards", "🎱", "tsdb", "search:Mosconi Cup|World Pool Championship|9-Ball", "events"),
 ]
@@ -69,10 +69,90 @@ TICKETS = {
     "Formula 1": ("F1 Tickets", "https://tickets.formula1.com/en"),
     "NASCAR": ("NASCAR Tickets", "https://www.nascar.com/tickets/"),
     "IPL": ("IPL (iplt20.com)", "https://www.iplt20.com/"),
-    "Boxing": ("Matchroom Boxing", "https://www.matchroomboxing.com/tickets/"),
+    "Boxing": None,   # every card has its own promoter; no single seller
     "Snooker": ("World Snooker Tour", "https://www.wst.tv/tickets/"),
-    "Pool / Billiards": ("Matchroom Pool", "https://www.matchroompool.com/tickets/"),
+    "Pool / Billiards": ("World Nine-ball Tour", "https://worldnineballtour.com/tickets/"),
 }
+# Where to watch (owner, 8 Nov 2026): each league's official watch / broadcasters-by-country page where one
+# exists (rights differ by country); La Liga and Serie A have none, so LiveSoccerTV's per-country listings.
+WATCH = {
+    "Premier League": ("Premier League broadcasters by country", "https://www.premierleague.com/en/media/broadcasters"),
+    "La Liga": ("LiveSoccerTV (by country)", "https://www.livesoccertv.com/competitions/spain/primera-division/"),
+    "Bundesliga": ("Bundesliga: where to watch", "https://www.bundesliga.com/en/faq/where-to-watch-bundesliga"),
+    "Champions League": ("UEFA broadcasters by country", "https://www.uefa.com/uefachampionsleague/news/0253-0d82037aaedd-f371c464f919-1000--where-to-watch-the-uefa-champions-league-tv-broadcast-partners-streams/"),
+    "Serie A": ("LiveSoccerTV (by country)", "https://www.livesoccertv.com/competitions/italy/serie-a/"),
+    "NBA": ("NBA League Pass", "https://www.nba.com/watch/league-pass-stream"),
+    "NFL": ("NFL+ / Game Pass", "https://www.nfl.com/plus/"),
+    "NHL": ("NHL: how to watch", "https://www.nhl.com/info/how-to-watch-and-stream-nhl-games"),
+    "MLB": ("MLB.TV", "https://www.mlb.com/tv"),
+    "UFC": ("UFC Fight Pass", "https://ufcfightpass.com/"),
+    "Formula 1": ("F1 TV", "https://f1tv.formula1.com/"),
+    "NASCAR": ("NASCAR: where to watch", "https://www.nascar.com/where-to-watch/"),
+    "IPL": ("IPL (iplt20.com)", "https://www.iplt20.com/"),
+    "Snooker": ("WST: where to watch", "https://www.wst.tv/where-to-watch"),
+    "Pool / Billiards": ("World Nine-ball Tour", "https://worldnineballtour.com/"),
+}
+# Boxing: the channel ESPN names for each card, linked when it's one we know the official site of
+BOX_CHANNELS = {"ESPN": "https://www.espn.com/watch/", "DAZN": "https://www.dazn.com/", "Netflix": "https://www.netflix.com/",
+                "Paramount+": "https://www.paramountplus.com/", "Prime Video": "https://www.primevideo.com/"}
+MONTHS = {m: i for i, m in enumerate(["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"], 1)}
+
+
+def _espn_boxing(league: str, story_id: str, now) -> list[dict]:
+    """ESPN's boxing schedule article (all promoters, updated weekly), read from ESPN's news API: each card is
+    "Nov. 14: Carson, California (TNT and DAZN)" followed by its fights, title fights marked."""
+    import html as _html
+    import re
+    try:
+        d = common.get(f"https://now.core.api.espn.com/v1/sports/news/{story_id}", headers=ESPN_HEADERS) or {}
+    except common.FetchError as exc:
+        common.log(f"upcoming boxing: {exc}")
+        return []
+    story = ((d.get("headlines") or [{}])[0]).get("story") or ""
+    lines = [l.strip() for l in _html.unescape(re.sub(r"<[^>]+>", "\n", story)).splitlines() if l.strip()]
+    if "Full schedule:" in lines:
+        lines = lines[lines.index("Full schedule:") + 1:]
+    head = re.compile(r"^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sept?|Oct|Nov|Dec)\.? (\d{1,2}): (.+?)(?: \(([^)]+)\))?$")
+    cards, cur, title_next = [], None, False
+    for l in lines:
+        m = head.match(l)
+        if m:
+            mon, day = MONTHS[m.group(1)[:3]], int(m.group(2))
+            year = now.year + (1 if mon < now.month - 2 else 0)
+            try:
+                when = datetime(year, mon, day, tzinfo=timezone.utc)
+            except ValueError:
+                cur = None
+                continue
+            cur = {"when": when, "place": m.group(3).strip(), "tv": (m.group(4) or "").strip(), "fights": []}
+            cards.append(cur)
+            continue
+        if cur is None:
+            continue
+        if l.rstrip(":").lower() == "title fight":
+            title_next = True
+            continue
+        if " vs. " in l:
+            cur["fights"].append({"text": l, "title": title_next or " for " in l and "title" in l})
+        title_next = False
+    out = []
+    for c in cards:
+        if c["when"] + timedelta(days=1) < now or not c["fights"]:   # dates only: today's card stays all day
+            continue
+        main = c["fights"][0]["text"]
+        bout = main.split(",")[0]
+        titles = [f["text"] for f in c["fights"] if f["title"]]
+        why = f"Main event: {main}." + (f" Title fights on the card: {len(titles)}." if titles else "") + f" {len(c['fights'])} fight{'s' if len(c['fights']) != 1 else ''} in all."
+        tv = c["tv"]
+        first = next((n for n in BOX_CHANNELS if n.lower() in tv.lower()), None)
+        ev = {"league": league, "title": bout, "when": common.iso(c["when"]), "venue": c["place"], "date_only": True,
+              "image": None, "url": "https://www.espn.com/boxing/story/_/id/12508267/boxing-schedule", "why": why}
+        if tv:
+            ev["watch"] = {"name": tv, "url": BOX_CHANNELS[first] if first else None}
+        out.append(ev)
+    return _next_30_days(out, now, days=60)   # big fights are announced weeks ahead
+
+
 WIKIDATA = "https://www.wikidata.org/w/api.php"
 CLUB_SITES = common.STATE / "club_sites.json"
 _club_cache: dict | None = None
@@ -203,10 +283,10 @@ def _espn_events(league: str, path: str, now) -> list[dict]:
     return _next_30_days(out, now)
 
 
-def _next_30_days(rows: list[dict], now) -> list[dict]:
-    """Every event in the next 30 days, soonest first; at least the next one when none is that close."""
+def _next_30_days(rows: list[dict], now, days: int = 30) -> list[dict]:
+    """Every event in the next 30 days (boxing: 60), soonest first; at least the next one when none is that close."""
     rows = sorted(rows, key=lambda x: x["when"])
-    soon = [r for r in rows if (common.parse_time(r["when"]) or now) <= now + timedelta(days=30)]
+    soon = [r for r in rows if (common.parse_time(r["when"]) or now) <= now + timedelta(days=days)]
     return soon or rows[:1]
 
 
@@ -265,6 +345,8 @@ def build(now=None) -> dict:
     for league, icon, source, ref, kind in LEAGUES:
         if source == "espn":
             got = _espn_games(league, ref, now) if kind == "games" else _espn_events(league, ref, now)
+        elif source == "espnbox":
+            got = _espn_boxing(league, ref, now) or _tsdb(league, "4445", now)   # TheSportsDB if ESPN's page changes
         else:
             got = _tsdb(league, ref, now)
         for i, g in enumerate(got):
@@ -276,8 +358,10 @@ def build(now=None) -> dict:
                 g["tickets"] = {"name": f"{home} official site", "url": site}
             elif TICKETS.get(league):
                 g["tickets"] = {"name": TICKETS[league][0], "url": TICKETS[league][1]}
+            if "watch" not in g and WATCH.get(league):
+                g["watch"] = {"name": WATCH[league][0], "url": WATCH[league][1]}
             events.append({**g, "id": common.fingerprint(f"{league}|{g['title']}|{g['when']}"), "icon": icon,
-                           "rank": i + 1, "source": "ESPN" if source == "espn" else "TheSportsDB",
+                           "rank": i + 1, "source": "ESPN" if source in ("espn", "espnbox") else "TheSportsDB",
                            "group": _group(league, ref)})
         if not got:
             empty.append(league)
@@ -286,4 +370,5 @@ def build(now=None) -> dict:
             "groups": {g: [l[0] for l in LEAGUES if _group(l[0], l[3]) == g]
                        for g in ("football", "nba", "nhl", "nfl", "mlb", "more")},
             "tickets": {k: {"name": v[0], "url": v[1]} for k, v in TICKETS.items() if v},
+            "watch": {k: {"name": v[0], "url": v[1]} for k, v in WATCH.items()},
             "off_season": empty, "built_at": common.iso(now)}

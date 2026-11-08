@@ -576,7 +576,7 @@ const GROUP_NOTE = {
   football: "Every upcoming game across all the football leagues, soonest first: the next 7 days (a league with no game this week shows its next round).",
   nba: "Every NBA game in the next 7 days, soonest first.", nhl: "Every NHL game in the next 7 days, soonest first.",
   nfl: "Every NFL game in the next 7 days, soonest first.", mlb: "Every MLB game in the next 7 days, soonest first.",
-  more: "Every event in the next 30 days across F1, NASCAR, UFC, boxing, IPL cricket, snooker and pool, soonest first.",
+  more: "Every event across F1, NASCAR, UFC, IPL cricket, snooker and pool in the next 30 days, and every boxing card in the next 60 days (from ESPN's boxing schedule, all promoters), soonest first.",
 };
 function upcomingView(up, rows, q, group, route) {
   const title = (UPCOMING_TABS.find(([, , g]) => g === group) || UPCOMING_TABS[0])[1].replace(/^\S+\s/, "");
@@ -611,11 +611,14 @@ function upcomingView(up, rows, q, group, route) {
     if (location.hash === token) paintStatus(live, upcoming, finished, emptyText);
   }).catch(() => {});
   if (league) {   // every league keeps its ticket link, even with nothing scheduled
-    const t = (up.tickets || {})[league];
+    const t = (up.tickets || {})[league], w = (up.watch || {})[league];
     const n = $("note");
     n.innerHTML += t
       ? ` <b>Tickets:</b> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.name)}</a>.`
-      : (group === "football" ? " <b>Tickets:</b> sold by each home club on its official site (linked on every game)." : "");
+      : group === "football" ? " <b>Tickets:</b> sold by each home club on its official site (linked on every game)."
+      : league === "Boxing" ? " <b>Tickets:</b> sold by each card's promoter." : "";
+    n.innerHTML += w ? ` <b>Watch:</b> <a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.name)}</a>.`
+      : league === "Boxing" ? " <b>Watch:</b> the channel is named on each card." : "";
   }
   return ["sports", route];
 }
@@ -685,6 +688,7 @@ const daysAway = (when) => Math.round((Date.parse(when) - Date.now()) / 864e5);
 
 // Where to buy (owner, 8 Nov 2026): the most official seller, its name linked, centered under "Why it's here".
 // The click opens the seller in a new tab without also opening the card's detail sheet.
+const watchLine = (w) => (w && w.name ? `<div class="tickets">📺 Watch: ${w.url ? `<a href="${esc(w.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(w.name)}</a>` : esc(w.name)}</div>` : "");
 const ticketLine = (t) => (t && t.url ? `<div class="tickets">🎟️ Tickets: <a href="${esc(t.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(t.name)}</a></div>` : "");
 function upcomingCard(e) {
   const logos = e.image2 && e.image2 !== e.image
@@ -697,12 +701,12 @@ function upcomingCard(e) {
   const score = e.score ? `<div class="score">${esc(e.score)}</div>` : "";
   return `<article class="card${e.status ? " card-" + e.status : ""}" tabindex="0" data-item="${esc(e.id)}">${logos}
     <div class="body"><div class="badges"><span class="badge">${esc(e.icon)} ${esc(e.league)}</span>${pill}</div>
-    <h3 class="title">${esc(e.title)}</h3>${score}<div class="meta">${e.date_only ? kuwait(e.when, false) + " (time not announced)" : `${kuwait(e.when)} (${tzLabel()})`}${e.venue ? " · " + esc(e.venue) : ""}</div>${e.status ? "" : why(e.why) + ticketLine(e.tickets)}</div></article>`;
+    <h3 class="title">${esc(e.title)}</h3>${score}<div class="meta">${e.date_only ? kuwait(e.when, false) + " (time not announced)" : `${kuwait(e.when)} (${tzLabel()})`}${e.venue ? " · " + esc(e.venue) : ""}</div>${e.status ? "" : why(e.why) + ticketLine(e.tickets) + watchLine(e.watch)}</div></article>`;
 }
 function upcomingDetail(e) {
   return `<div class="detail"><h2 id="sheetTitle">${esc(e.title)}</h2><div class="meta">${esc(e.icon)} ${esc(e.league)} · ${e.date_only ? kuwait(e.when, false) + " (time not announced)" : `${kuwait(e.when)} (${tzLabel()})`}</div>
     ${e.score ? `<p class="score">${esc(e.score)}${e.clock ? " · " + esc(e.clock) : ""}</p>` : ""}
-    ${e.venue ? `<p>Venue: ${esc(e.venue)}</p>` : ""}${e.why ? `<h3>Why it's here</h3><p>${esc(e.why)}</p>` : ""}${ticketLine(e.tickets)}
+    ${e.venue ? `<p>Venue: ${esc(e.venue)}</p>` : ""}${e.why ? `<h3>Why it's here</h3><p>${esc(e.why)}</p>` : ""}${ticketLine(e.tickets)}${watchLine(e.watch)}
     ${e.url ? `<p><a href="${esc(e.url)}" target="_blank" rel="noopener">Details on ${esc(e.source)}</a></p>` : ""}</div>`;
 }
 function highlightCard(v) {
