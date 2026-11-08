@@ -125,6 +125,45 @@ jobs:
           open(os.environ["GITHUB_STEP_SUMMARY"], "a").write("\n".join(lines) + "\n")
           PY
 
+      # Owner, 9 Nov 2026: a manual update of one section (e.g. music) also emails when it's done --
+      # a short bot issue (GitHub emails new issues to the repo owner), closed straight away.
+      - name: Email the owner (manual section update done)
+        if: always() && github.event_name == 'workflow_dispatch' && github.event.inputs.sections != '' && github.event.inputs.sections != 'sports'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SECTIONS: ${{ github.event.inputs.sections }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          python - <<'PY' > note.md
+          import json, os
+          secs = os.environ["SECTIONS"]
+          ok = os.environ["OUTCOME"] == "success"
+          print(f"Discover: {secs} update {'done' if ok else 'FAILED'}")
+          print()
+          if not ok:
+              print("The update didn't finish; the site keeps the previous lists. Ask Claude to check the run.")
+          try:
+              meta = json.load(open("state/last/meta.json")).get("sections") or {}
+          except Exception:
+              meta = {}
+          for s in secs.split():
+              m = meta.get(s) or {}
+              print(f"- {s}: {'updated' if m.get('ok') else 'kept the previous lists'} ({m.get('items')} items)")
+          if "music" in secs.split():
+              try:
+                  g = json.load(open("site/data/music.json"))["genres"]
+                  for gid in ("all", "rap", "rock"):
+                      print(f"\n{g[gid]['name']}, All Time top 10:")
+                      for x in g[gid]["all_time"][:10]:
+                          print(f"{x['rank']}. {x['artist']} - {x['title']} ({x['metrics']['views']:,} views)")
+              except Exception as exc:
+                  print(f"\n(couldn't read the music lists: {exc})")
+          PY
+          title=$(head -1 note.md)
+          tail -n +3 note.md > body.md
+          url=$(gh issue create --title "$title $(date -u +%H:%M) UTC" --body-file body.md)
+          gh issue close "$url" --reason completed >/dev/null || true
+
       # Owner, 2 Nov 2026: an email after each daily update. A short issue from the bot (GitHub emails
       # new issues to the repo owner), closed straight away so the repo stays tidy.
       - name: Email the owner (daily update done)
