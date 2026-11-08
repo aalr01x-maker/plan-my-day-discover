@@ -46,6 +46,9 @@ button { font: inherit; color: inherit; }
 .seg + .seg { border-left: 1px solid var(--line); }
 .seg[aria-selected="true"] { background: var(--surface2); color: var(--accent); font-weight: 700; }
 .filters { padding-top: 10px; }
+/* Upcoming lists: the league row stays pinned under the site header while scrolling */
+.filters.sticky { position: sticky; top: var(--top-h, 96px); z-index: 15; padding-bottom: 8px;
+  background: color-mix(in srgb, var(--bg) 92%, transparent); backdrop-filter: blur(8px); }
 .filters:empty, .subtabs:empty { display: none; }
 .note, .stale { max-width: 1280px; margin: 12px auto 0; padding: 10px 14px; border-radius: 10px; font-size: 13px; }
 .note { background: var(--surface); border: 1px solid var(--line); color: var(--muted); margin-left: 16px; margin-right: 16px; }
@@ -173,3 +176,16 @@ table.mini td, table.mini th { border-bottom: 1px solid var(--line); padding: 5p
 .tabrow { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; justify-content: safe center;
   -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
 .tabrow::-webkit-scrollbar { display: none; }
+
+/* Live / Upcoming / Finished sections (owner, 8 Nov 2026) */
+.status-head { grid-column: 1 / -1; margin: 14px 0 2px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.status-head span { font-size: 12px; font-weight: 600; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+.status-live { color: #e5484d; }
+.st-live { background: #e5484d; color: #fff; border-color: #e5484d; animation: livepulse 1.6s ease-in-out infinite; }
+.st-done { color: var(--muted); }
+.st-later { color: var(--accent); border-color: var(--accent); }
+.card-live { border-color: #e5484d; box-shadow: 0 0 0 1px #e5484d inset; }
+.card-finished { opacity: 0.85; }
+.score { font-size: 15px; font-weight: 700; margin: 4px 0; font-variant-numeric: tabular-nums; }
+@keyframes livepulse { 50% { opacity: 0.65; } }
+@media (prefers-reduced-motion: reduce) { .st-live { animation: none; } }

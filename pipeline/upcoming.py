@@ -1,4 +1,7 @@
-"""Sports -> Upcoming (owner, 1 Nov 2026): the next big events of the major leagues, top 3 each.
+"""Sports -> Upcoming. Owner, 8 Nov 2026: TWO lists, every game, no top-3 cut -- Football (all football leagues
+together) and Other sports (everything else together), each in time order. Team leagues: every game in the next
+7 days (a league on a break shows its next round, up to 21 days). Event series: every event in the next 30 days
+(at least the next one). The text below describes the original top-3 design; ranking now only orders nothing.
 
 Team leagues (ESPN's public scoreboard, one request per day for the next 3 weeks): the 3 most important
 games coming up, ranked by how strong both teams are this season (each side's record) with a bonus
@@ -165,9 +168,10 @@ def _espn_games(league: str, path: str, now) -> list[dict]:
             })
         time.sleep(0.2)
     window = [g for g in games if g["offset"] < 7]
-    if len(window) < PER_LEAGUE:
-        window = games
-    return sorted(sorted(window, key=lambda g: -g["score"])[:PER_LEAGUE], key=lambda g: g["when"])   # the 3 biggest, soonest first
+    if not window and games:   # a break (e.g. international week): the league's next round
+        first = min(g["offset"] for g in games)
+        window = [g for g in games if g["offset"] < first + 4]
+    return sorted(window, key=lambda g: g["when"])   # every game, soonest first (owner, 8 Nov 2026)
 
 
 def _espn_events(league: str, path: str, now) -> list[dict]:
@@ -196,7 +200,14 @@ def _espn_events(league: str, path: str, now) -> list[dict]:
             why = "Race day" + (f" at {venue}" if venue else "") + "."
         out.append({"league": league, "title": e.get("name"), "when": when, "venue": venue, "image": None,
                     "url": ((e.get("links") or [{}])[0]).get("href"), "why": why})
-    return sorted(out, key=lambda x: x["when"])[:PER_LEAGUE]
+    return _next_30_days(out, now)
+
+
+def _next_30_days(rows: list[dict], now) -> list[dict]:
+    """Every event in the next 30 days, soonest first; at least the next one when none is that close."""
+    rows = sorted(rows, key=lambda x: x["when"])
+    soon = [r for r in rows if (common.parse_time(r["when"]) or now) <= now + timedelta(days=30)]
+    return soon or rows[:1]
 
 
 def _tsdb(league: str, ids: str, now) -> list[dict]:
@@ -236,7 +247,7 @@ def _tsdb(league: str, ids: str, now) -> list[dict]:
                     "image": r.get("strThumb") or r.get("strPoster"),
                     "url": f"https://www.thesportsdb.com/event/{r.get('idEvent')}",
                     "why": f"{r.get('strLeague') or league}" + (f", {r.get('strSeason')} season" if r.get("strSeason") else "") + "."})
-    return sorted(out, key=lambda x: x["when"])[:PER_LEAGUE]
+    return _next_30_days(out, now)
 
 
 def build(now=None) -> dict:
@@ -257,10 +268,13 @@ def build(now=None) -> dict:
             elif TICKETS.get(league):
                 g["tickets"] = {"name": TICKETS[league][0], "url": TICKETS[league][1]}
             events.append({**g, "id": common.fingerprint(f"{league}|{g['title']}|{g['when']}"), "icon": icon,
-                           "rank": i + 1, "source": "ESPN" if source == "espn" else "TheSportsDB"})
+                           "rank": i + 1, "source": "ESPN" if source == "espn" else "TheSportsDB",
+                           "group": "football" if ref.startswith("soccer/") else "other"})
         if not got:
             empty.append(league)
         common.log(f"upcoming {league}: {len(got)}")
     return {"icon": "📅", "name": "Upcoming", "leagues": [l[0] for l in LEAGUES], "events": events,
+            "groups": {"football": [l[0] for l in LEAGUES if l[3].startswith("soccer/")],
+                       "other": [l[0] for l in LEAGUES if not l[3].startswith("soccer/")]},
             "tickets": {k: {"name": v[0], "url": v[1]} for k, v in TICKETS.items() if v},
             "off_season": empty, "built_at": common.iso(now)}
