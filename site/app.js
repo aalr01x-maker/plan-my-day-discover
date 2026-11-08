@@ -538,7 +538,9 @@ async function sports(parts, q) {
   allRow.title = "Top Highlights";
   const row2 = ROW2.map((id) => sportTabs.find(([x]) => x === id)).filter(Boolean);
   const row3 = sportTabs.filter(([id]) => !ROW2.includes(id) && id !== "cricket").concat(sportTabs.filter(([id]) => id === "cricket"));
-  const rows = [upTabs.map(([id, lbl]) => [id, lbl]), allRow, row2, row3];
+  const firstRow = upTabs.map(([id, lbl]) => [id, lbl]);
+  firstRow.title = "Finished Scores, Today or Upcoming Sports";   // centered over the row (owner, 9 Nov 2026)
+  const rows = [firstRow, allRow, row2, row3];
   if (parts[1] === "all-highlights") return allHighlights(data, rows);
   const upPick = upTabs.find(([id]) => id === parts[1]);
   if (up && (upPick || !parts[1] || !data.sports[parts[1]])) {
