@@ -651,14 +651,16 @@ function sportStrip(info) {
     const n = new URLSearchParams(); n.set("league", b.dataset.id); go(["sports", route], n, true);
   };
 }
+// Snooker and pool sit together as one sport in More Sports (owner, 9 Nov 2026)
+const sportKey = (l) => (l === "Snooker" || l === "Pool / Billiards" ? "Snooker & Pool" : l);
 function upcomingView(up, rows, q, group, route) {
   const title = (UPCOMING_TABS.find(([, , g]) => g === group) || UPCOMING_TABS[0])[1].replace(/^\S+\s/, "");
-  const groupLeagues = ((up.groups && up.groups[group]) || up.leagues.filter((l) => leagueGroup(l) === group));
+  const groupLeagues = [...new Set(((up.groups && up.groups[group]) || up.leagues.filter((l) => leagueGroup(l) === group)).map(sportKey))];
   // only games still to come; anything that has started is under Today / Finished
   const ahead = withState(up).filter((e) => !e.status && groupOf(e) === group);
   const counts = {}, icons = {};
-  for (const e of ahead) { counts[e.league] = (counts[e.league] || 0) + 1; icons[e.league] = e.icon; }
-  for (const e of up.events) icons[e.league] = icons[e.league] || e.icon;
+  for (const e of ahead) { const k = sportKey(e.league); counts[k] = (counts[k] || 0) + 1; icons[k] = e.icon; }
+  for (const e of up.events) icons[sportKey(e.league)] = icons[sportKey(e.league)] || e.icon;
   Object.assign(icons, { IPL: "🏏", NASCAR: "🏁", ...icons });
   // the league pick is remembered per list (owner: sticky league filters), a ?league= link still wins;
   // a remembered league with nothing scheduled is dropped, so the list never opens empty on its own
@@ -680,9 +682,9 @@ function upcomingView(up, rows, q, group, route) {
     chips([], [], () => {});   // single-league tabs need no filter; More Sports uses the sport row above the box
   }
   sportStrip(group === "more" ? { leagues: groupLeagues, counts, icons, league, route } : null);
-  const list = ahead.filter((e) => !league || e.league === league).sort((a, b) => String(a.when).localeCompare(String(b.when)));
+  const list = ahead.filter((e) => !league || sportKey(e.league) === league).sort((a, b) => String(a.when).localeCompare(String(b.when)));
   heading("sports", [title, league || (multi ? (group === "more" ? "All sports" : "All leagues") : "")].filter(Boolean));
-  const off = up.off_season.filter((l) => groupLeagues.includes(l) && (!league || l === league));
+  const off = up.off_season.filter((l) => groupLeagues.includes(sportKey(l)) && (!league || sportKey(l) === league));
   note(GROUP_NOTE[group] + " Split into today, this week and this month; games already under way are under Today, results under Finished. Times are shown in your time zone." + (off.length ? ` Nothing scheduled yet (off-season or not announced): ${off.join(", ")}.` : ""));
   const emptyText = league ? `No ${league} events announced yet (off-season).` : "No upcoming events yet.";
   paintStatus(list, emptyText, group === "more" && !league);
@@ -718,9 +720,9 @@ function paintStatus(upcoming, emptyText, bySport) {
   if (!parts.some(([, , a]) => a.length)) return empty(term ? `Nothing here matches “${term}”.` : emptyText);
   const cards = (a) => {
     if (!bySport) return a.map(upcomingCard).join("");
-    const order = [...new Set(a.map((e) => e.league))];
+    const order = [...new Set(a.map((e) => sportKey(e.league)))];
     return order.map((l) => {
-      const b = a.filter((e) => e.league === l);
+      const b = a.filter((e) => sportKey(e.league) === l);
       return `<h3 class="sport-head">${esc(b[0].icon)} ${esc(l)} <span>${b.length}</span></h3>` + b.map(upcomingCard).join("");
     }).join("");
   };
