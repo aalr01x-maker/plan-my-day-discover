@@ -14,6 +14,11 @@ on:
   schedule:
     - cron: "4,19,34,49 * * * *"   # every 15 min, off the top of the hour when GitHub is busiest
   workflow_dispatch:
+    inputs:
+      force:
+        description: "Deploy even if no score changed (ships site code changes quickly)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -66,7 +71,7 @@ jobs:
           echo "changed=$([ "$state" = changed ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
       - name: Deploy (only when scores changed and no daily deploy happened meanwhile)
-        if: steps.gate.outputs.go == 'true' && steps.build.outputs.changed == 'true'
+        if: steps.gate.outputs.go == 'true' && (steps.build.outputs.changed == 'true' || inputs.force)
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         run: |

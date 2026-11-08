@@ -530,9 +530,16 @@ async function sports(parts, q) {
   // Owner, 8 Nov 2026: Upcoming tabs on the top row (football, NBA, NHL, NFL, MLB, more sports; a league out
   // of season hides its tab), the sport tabs on the row under them, then the league filter.
   const upTabs = up ? [...CROSS_TABS, ...UPCOMING_TABS.filter(([id, , g]) => g === "football" || up.events.some((e) => groupOf(e) === g))] : [];
+  // Top Highlights in three rows (owner, 9 Nov 2026): All Highlights first (every sport together, most
+  // viewed first), then the main sports, then the rest with cricket last
   const sportTabs = Object.entries(data.sports).map(([id, s]) => [id, `${s.icon} ${s.name}`]);
-  sportTabs.title = "Top Highlights";
-  const rows = [upTabs.map(([id, lbl]) => [id, lbl]), sportTabs];
+  const ROW2 = ["soccer", "basketball", "american-football", "mma", "motorsports", "baseball"];
+  const allRow = [["all-highlights", "🎬 All Highlights"]];
+  allRow.title = "Top Highlights";
+  const row2 = ROW2.map((id) => sportTabs.find(([x]) => x === id)).filter(Boolean);
+  const row3 = sportTabs.filter(([id]) => !ROW2.includes(id) && id !== "cricket").concat(sportTabs.filter(([id]) => id === "cricket"));
+  const rows = [upTabs.map(([id, lbl]) => [id, lbl]), allRow, row2, row3];
+  if (parts[1] === "all-highlights") return allHighlights(data, rows);
   const upPick = upTabs.find(([id]) => id === parts[1]);
   if (up && (upPick || !parts[1] || !data.sports[parts[1]])) {
     const [route, , g] = upPick || upTabs[0];
@@ -564,6 +571,22 @@ async function sports(parts, q) {
       : `No ${league} ${view === "highlights" ? "highlight videos" : "results or events"} in the last 7 days — usually because no ${league} matches were played this week.`)
       : "Nothing in this view right now.");
   return ["sports", sport, view];
+}
+// All Highlights (owner, 9 Nov 2026): every sport's official highlight videos from the last 7 days, most
+// viewed first, each marked with its sport
+function allHighlights(data, rows) {
+  tabsRows($("tabs"), rows, "all-highlights", (id) => go(["sports", id], null));
+  $("subtabs").innerHTML = "";
+  chips([], [], () => {});
+  sportStrip(null);
+  const weekAgo = Date.now() - 7 * 864e5, seen = new Set();
+  const list = Object.values(data.sports).flatMap((s) => (s.highlights || []).map((v) => ({ ...v, league: `${s.icon} ${s.name}${v.league ? " · " + v.league : ""}` })))
+    .filter((v) => Date.parse(v.published) >= weekAgo && !seen.has(v.youtube_id) && seen.add(v.youtube_id))
+    .sort((a, b) => (b.views || 0) - (a.views || 0));
+  heading("sports", ["All Highlights", "All sports"]);
+  note("Official highlight videos from every sport's league channels in the last 7 days, most watched first. Each video is marked with its sport.");
+  paint(list, highlightCard, highlightDetail, "No highlight videos in the last 7 days.");
+  return ["sports", "all-highlights"];
 }
 // Upcoming (owner, 8 Nov 2026): one list per tab -- every game, soonest first, no top-3 cut.
 const UPCOMING_TABS = [
