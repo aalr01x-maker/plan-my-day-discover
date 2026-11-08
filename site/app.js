@@ -576,7 +576,7 @@ const GROUP_OF_LEAGUE = { NBA: "nba", NHL: "nhl", NFL: "nfl", MLB: "mlb" };
 // ESPN's servers refuse requests from a browser, so nothing here is fetched live: the daily noon run keeps
 // the last day's final scores, and "on now" is worked out from each game's start time and usual length.
 // Live Now was dropped (owner, 9 Nov 2026): with one update a day it could only repeat Today.
-const CROSS_TABS = [["finished", "✅ Finished", "@finished"], ["today", "📍 Today", "@today"]];
+const CROSS_TABS = [["finished", "✅ Finished", "@finished"], ["today", "🔴 Today", "@today"]];
 const GROUP_HEADS = [["football", "⚽ Football"], ["nba", "🏀 NBA"], ["nhl", "🏒 NHL"], ["nfl", "🏈 NFL"], ["mlb", "⚾ MLB"], ["more", "🏁 More Sports"]];
 const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const isToday = (e) => (e.date_only ? e.when.slice(0, 10) === localDay(new Date()) : localDay(new Date(e.when)) === localDay(new Date()));
