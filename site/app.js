@@ -119,7 +119,8 @@ function tabsRow(el, items, selected, onPick, role = "tab") {
 // Several rows of tabs in one tab bar (News: topics, then World + regions).
 function tabsRows(el, rows, selected, onPick) {
   el.classList.add("tabs--rows");
-  el.innerHTML = rows.filter((r) => r.length).map((items) => `<div class="tabrow" role="tablist">` + items.map(([id, label]) =>
+  // a row may carry a title shown over it (owner, 9 Nov 2026: "Top Highlights" over the sport tabs)
+  el.innerHTML = rows.filter((r) => r.length).map((items) => (items.title ? `<div class="tabrow-title">${esc(items.title)}</div>` : "") + `<div class="tabrow" role="tablist">` + items.map(([id, label]) =>
     `<button class="tab" role="tab" aria-selected="${id === selected}" data-id="${esc(id)}">${esc(label)}</button>`).join("") + `</div>`).join("");
   el.onclick = (e) => {
     const b = e.target.closest("button[data-id]");
@@ -530,6 +531,7 @@ async function sports(parts, q) {
   // of season hides its tab), the sport tabs on the row under them, then the league filter.
   const upTabs = up ? [...CROSS_TABS, ...UPCOMING_TABS.filter(([id, , g]) => g === "football" || up.events.some((e) => groupOf(e) === g))] : [];
   const sportTabs = Object.entries(data.sports).map(([id, s]) => [id, `${s.icon} ${s.name}`]);
+  sportTabs.title = "Top Highlights";
   const rows = [upTabs.map(([id, lbl]) => [id, lbl]), sportTabs];
   const upPick = upTabs.find(([id]) => id === parts[1]);
   if (up && (upPick || !parts[1] || !data.sports[parts[1]])) {
