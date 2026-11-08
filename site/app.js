@@ -528,12 +528,13 @@ async function sports(parts, q) {
   const up = data.upcoming;
   // Owner, 8 Nov 2026: Upcoming tabs on the top row (football, NBA, NHL, NFL, MLB, more sports; a league out
   // of season hides its tab), the sport tabs on the row under them, then the league filter.
-  const upTabs = up ? UPCOMING_TABS.filter(([id, , g]) => g === "football" || up.events.some((e) => groupOf(e) === g)) : [];
+  const upTabs = up ? [...CROSS_TABS, ...UPCOMING_TABS.filter(([id, , g]) => g === "football" || up.events.some((e) => groupOf(e) === g))] : [];
   const sportTabs = Object.entries(data.sports).map(([id, s]) => [id, `${s.icon} ${s.name}`]);
   const rows = [upTabs.map(([id, lbl]) => [id, lbl]), sportTabs];
   const upPick = upTabs.find(([id]) => id === parts[1]);
   if (up && (upPick || !parts[1] || !data.sports[parts[1]])) {
     const [route, , g] = upPick || upTabs[0];
+    if (g.startsWith("@")) return crossView(up, rows, g.slice(1), route);
     return upcomingView(up, rows, q, g, route);
   }
   const tabs = [...upTabs, ...sportTabs];
@@ -569,6 +570,50 @@ const UPCOMING_TABS = [
   ["upcoming-mlb", "⚾ Upcoming MLB", "mlb"], ["upcoming-more", "🏁 Upcoming More Sports", "more"],
 ];
 const GROUP_OF_LEAGUE = { NBA: "nba", NHL: "nhl", NFL: "nfl", MLB: "mlb" };
+// Live Now, Finished and Today come first (owner, 8 Nov 2026): every sport together, split into the same groups
+const CROSS_TABS = [["live", "🔴 Live Now", "@live"], ["finished", "✅ Finished", "@finished"], ["today", "📍 Today", "@today"]];
+const GROUP_HEADS = [["football", "⚽ Football"], ["nba", "🏀 NBA"], ["nhl", "🏒 NHL"], ["nfl", "🏈 NFL"], ["mlb", "⚾ MLB"], ["more", "🏁 More Sports"]];
+const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const isToday = (e) => (e.date_only ? e.when.slice(0, 10) === localDay(new Date()) : localDay(new Date(e.when)) === localDay(new Date()));
+function paintGroups(items, emptyText) {
+  currentItems = items; renderCard = upcomingCard; renderDetail = upcomingDetail;
+  const term = ($("search").value || "").trim().toLowerCase();
+  const shown = term ? items.filter((it) => JSON.stringify(it).toLowerCase().includes(term)) : items;
+  if (!shown.length) return empty(term ? `Nothing here matches “${term}”.` : emptyText);
+  $("content").innerHTML = GROUP_HEADS.map(([g, label]) => {
+    const a = shown.filter((e) => groupOf(e) === g);
+    return a.length ? `<h2 class="status-head">${label} <span>${a.length}</span></h2>` + a.map(upcomingCard).join("") : "";
+  }).join("");
+}
+function crossView(up, rows, kind, route) {
+  tabsRows($("tabs"), rows, route, (id) => go(["sports", id], null));
+  $("subtabs").innerHTML = "";
+  chips([], [], () => {});
+  const name = { live: "Live Now", finished: "Finished", today: "Today" }[kind];
+  heading("sports", [name, "All sports"]);
+  note({ live: "Every game being played right now, across all sports, from ESPN's live scores.",
+    finished: "Every game finished in the last 24 hours, across all sports, with final scores.",
+    today: "Everything on today across all sports: still to come, live and finished, marked on each." }[kind]
+    + " Grouped by sport. Times are shown in your time zone.");
+  const upcomingToday = up.events.filter(isToday).sort((a, b) => String(a.when).localeCompare(String(b.when)));
+  const emptyText = { live: "Nothing is being played right now.", finished: "No games finished in the last 24 hours.", today: "Nothing scheduled today." }[kind];
+  paintGroups(kind === "today" ? upcomingToday : [], "Loading live scores…");
+  const token = location.hash;
+  Promise.all(GROUP_HEADS.map(([g]) => liveOverlay(g, "", up.events.filter((e) => groupOf(e) === g)))).then((res) => {
+    if (location.hash !== token) return;
+    const live = res.flatMap((r) => r.live), finished = res.flatMap((r) => r.finished);
+    let list;
+    if (kind === "live") list = live;
+    else if (kind === "finished") list = finished;
+    else {
+      const started = new Set([...live, ...finished].map((e) => `${e.league}|${e.title}`));
+      list = [...live.filter(isToday), ...finished.filter(isToday),
+        ...upcomingToday.filter((e) => !started.has(`${e.league}|${e.title}`))].sort((a, b) => String(a.when).localeCompare(String(b.when)));
+    }
+    paintGroups(list, emptyText);
+  }).catch(() => paintGroups(kind === "today" ? upcomingToday : [], emptyText));
+  return ["sports", route];
+}
 const SOCCER = new Set(["Premier League", "La Liga", "Bundesliga", "Champions League", "Serie A"]);
 const leagueGroup = (l) => (SOCCER.has(l) ? "football" : GROUP_OF_LEAGUE[l] || "more");
 const groupOf = (e) => (e.group && e.group !== "other" ? e.group : leagueGroup(e.league));
@@ -576,7 +621,7 @@ const GROUP_NOTE = {
   football: "Every upcoming game across all the football leagues, soonest first: the next 7 days (a league with no game this week shows its next round).",
   nba: "Every NBA game in the next 7 days, soonest first.", nhl: "Every NHL game in the next 7 days, soonest first.",
   nfl: "Every NFL game in the next 7 days, soonest first.", mlb: "Every MLB game in the next 7 days, soonest first.",
-  more: "Every event across F1, NASCAR, UFC, IPL cricket, snooker and pool in the next 30 days, and every boxing card in the next 60 days (from ESPN's boxing schedule, all promoters), soonest first.",
+  more: "Every event in the next 30 days across F1, NASCAR, UFC, boxing (ESPN's boxing schedule, all promoters), IPL cricket, snooker and pool, soonest first.",
 };
 function upcomingView(up, rows, q, group, route) {
   const title = (UPCOMING_TABS.find(([, , g]) => g === group) || UPCOMING_TABS[0])[1].replace(/^\S+\s/, "");
@@ -602,7 +647,7 @@ function upcomingView(up, rows, q, group, route) {
   const list = up.events.filter((e) => inGroup(e) && (!league || e.league === league)).slice().sort((a, b) => String(a.when).localeCompare(String(b.when)));
   heading("sports", [title, league || (groupLeagues.length > 1 ? (group === "more" ? "All sports" : "All leagues") : "")].filter(Boolean));
   const off = up.off_season.filter((l) => groupLeagues.includes(l) && (!league || l === league));
-  note(GROUP_NOTE[group] + " Live scores and the last 24 hours' results come straight from ESPN. Times are shown in your time zone." + (off.length ? ` Nothing scheduled yet (off-season or not announced): ${off.join(", ")}.` : ""));
+  note(GROUP_NOTE[group] + " Split into today, this week and this month; live games and results are under Live Now and Finished. Times are shown in your time zone." + (off.length ? ` Nothing scheduled yet (off-season or not announced): ${off.join(", ")}.` : ""));
   const emptyText = league ? `No ${league} events announced yet (off-season).` : "No upcoming events yet.";
   paintStatus([], list, [], emptyText);
   // live scores + results straight from ESPN in the browser (the data file updates once a day)
@@ -683,12 +728,11 @@ function paintStatus(live, upcoming, finished, emptyText) {
   const thisWeek = rest.filter((e) => !(dayOf(e) > weekEnd));
   const thisMonth = rest.filter((e) => dayOf(e) > weekEnd && !(dayOf(e) > monthEnd));
   const later = rest.filter((e) => dayOf(e) > monthEnd);
-  const all = [...live, ...today, ...thisWeek, ...thisMonth, ...later, ...finished];
+  const all = [...today, ...thisWeek, ...thisMonth];   // live/finished have their own tabs; nothing past a month (owner)
   currentItems = all; renderCard = upcomingCard; renderDetail = upcomingDetail;
   const term = ($("search").value || "").trim().toLowerCase();
   const keep = (arr) => (term ? arr.filter((it) => JSON.stringify(it).toLowerCase().includes(term)) : arr);
-  const parts = [["live", "🔴 Live now", keep(live)], ["today", "📍 Today", keep(today)], ["week", "📅 This week", keep(thisWeek)],
-    ["month", "🗓️ This month", keep(thisMonth)], ["later", "🔭 Later", keep(later)], ["done", "✅ Finished (last 24 hours)", keep(finished)]];
+  const parts = [["today", "📍 Today", keep(today)], ["week", "📅 This week", keep(thisWeek)], ["month", "🗓️ This month", keep(thisMonth)]];
   if (!parts.some(([, , a]) => a.length)) return empty(term ? `Nothing here matches “${term}”.` : emptyText);
   $("content").innerHTML = parts.filter(([, , a]) => a.length).map(([cls, label, a]) =>
     `<h2 class="status-head status-${cls}">${label} <span>${a.length}</span></h2>` + a.map(upcomingCard).join("")).join("");
