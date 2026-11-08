@@ -559,19 +559,30 @@ function upcomingView(up, tabs, q) {
     + "(both teams' records this season, plus national TV in US leagues). F1, NASCAR, UFC, boxing, snooker and pool: the next 3 events. "
     + "Times are shown in your time zone." + (off.length ? ` Nothing scheduled yet (off-season or not announced): ${off.join(", ")}.` : ""));
   paint(list, upcomingCard, upcomingDetail, league ? `No ${league} events announced yet (off-season).` : "No upcoming events yet.");
+  // every league keeps its ticket link, even with nothing scheduled (owner, 8 Nov 2026)
+  if (league) {
+    const t = (up.tickets || {})[league];
+    const n = $("note");
+    n.innerHTML += t
+      ? ` <b>Tickets:</b> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.name)}</a>.`
+      : (/League|Liga|Serie/.test(league) ? " <b>Tickets:</b> sold by each home club on its official site (linked on every game)." : "");
+  }
   return ["sports", "upcoming"];
 }
+// Where to buy (owner, 8 Nov 2026): the most official seller, its name linked, centered under "Why it's here".
+// The click opens the seller in a new tab without also opening the card's detail sheet.
+const ticketLine = (t) => (t && t.url ? `<div class="tickets">🎟️ Tickets: <a href="${esc(t.url)}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${esc(t.name)}</a></div>` : "");
 function upcomingCard(e) {
   const logos = e.image2 && e.image2 !== e.image
     ? `<div class="vs-logos">${img(e.image2, "vs-logo", "")}<span>vs</span>${img(e.image, "vs-logo", "")}</div>`
     : e.image ? `<div class="vs-logos">${img(e.image, "vs-logo wide", "")}</div>` : "";
   return `<article class="card" tabindex="0" data-item="${esc(e.id)}">${logos}
     <div class="body"><div class="badges"><span class="badge">${esc(e.icon)} ${esc(e.league)}</span></div>
-    <h3 class="title">${esc(e.title)}</h3><div class="meta">${e.date_only ? kuwait(e.when, false) + " (time not announced)" : `${kuwait(e.when)} (${tzLabel()})`}${e.venue ? " · " + esc(e.venue) : ""}</div>${why(e.why)}</div></article>`;
+    <h3 class="title">${esc(e.title)}</h3><div class="meta">${e.date_only ? kuwait(e.when, false) + " (time not announced)" : `${kuwait(e.when)} (${tzLabel()})`}${e.venue ? " · " + esc(e.venue) : ""}</div>${why(e.why)}${ticketLine(e.tickets)}</div></article>`;
 }
 function upcomingDetail(e) {
   return `<div class="detail"><h2 id="sheetTitle">${esc(e.title)}</h2><div class="meta">${esc(e.icon)} ${esc(e.league)} · ${e.date_only ? kuwait(e.when, false) + " (time not announced)" : `${kuwait(e.when)} (${tzLabel()})`}</div>
-    ${e.venue ? `<p>Venue: ${esc(e.venue)}</p>` : ""}<h3>Why it's here</h3><p>${esc(e.why)}</p>
+    ${e.venue ? `<p>Venue: ${esc(e.venue)}</p>` : ""}<h3>Why it's here</h3><p>${esc(e.why)}</p>${ticketLine(e.tickets)}
     ${e.url ? `<p><a href="${esc(e.url)}" target="_blank" rel="noopener">Details on ${esc(e.source)}</a></p>` : ""}</div>`;
 }
 function highlightCard(v) {

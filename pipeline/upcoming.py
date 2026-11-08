@@ -40,6 +40,68 @@ LEAGUES = [
 ]
 PER_LEAGUE = 3
 
+# Big clubs (owner, 8 Nov 2026): Man Utd v Aston Villa was left out because Man Utd's poor season record
+# ranked it below smaller fixtures. A game with one of a league's traditionally biggest clubs gets a boost
+# on top of the season records, so the matches people actually look for make the top 3.
+BIG_CLUBS = {
+    "soccer/eng.1": {"Manchester United", "Liverpool", "Arsenal", "Chelsea", "Manchester City", "Tottenham Hotspur"},
+    "soccer/esp.1": {"Real Madrid", "Barcelona", "Atlético Madrid"},
+    "soccer/ger.1": {"Bayern Munich", "Borussia Dortmund"},
+    "soccer/ita.1": {"Juventus", "Internazionale", "AC Milan", "Napoli", "AS Roma"},
+}
+BIG_CLUBS["soccer/uefa.champions"] = set().union(*BIG_CLUBS.values()) | {"Paris Saint-Germain"}
+BIG_CLUB_BONUS = 0.5
+
+# Where to buy (owner, 8 Nov 2026): the most official seller per league. Soccer uses the HOME club's own
+# website when it can be found (clubs sell their own tickets); otherwise these league pages.
+TICKETS = {
+    "Premier League": ("Premier League", "https://www.premierleague.com/en/tickets"),
+    "Bundesliga": ("Bundesliga", "https://www.bundesliga.com/en/bundesliga/tickets"),
+    "La Liga": None, "Serie A": None, "Champions League": None,   # home club only
+    "NBA": ("Ticketmaster (official NBA partner)", "https://www.ticketmaster.com/nba"),
+    "NFL": ("NFL Tickets", "https://www.nfl.com/tickets/"),
+    "NHL": ("NHL Tickets", "https://www.nhl.com/tickets/"),
+    "MLB": ("MLB Tickets", "https://www.mlb.com/tickets"),
+    "UFC": ("UFC Tickets", "https://www.ufc.com/tickets"),
+    "Formula 1": ("F1 Tickets", "https://tickets.formula1.com/en"),
+    "NASCAR": ("NASCAR Tickets", "https://www.nascar.com/tickets/"),
+    "IPL": ("IPL (iplt20.com)", "https://www.iplt20.com/"),
+    "Boxing": ("Matchroom Boxing", "https://www.matchroomboxing.com/tickets/"),
+    "Snooker": ("World Snooker Tour", "https://www.wst.tv/tickets/"),
+    "Pool / Billiards": ("Matchroom Pool", "https://www.matchroompool.com/tickets/"),
+}
+WIKIDATA = "https://www.wikidata.org/w/api.php"
+CLUB_SITES = common.STATE / "club_sites.json"
+_club_cache: dict | None = None
+
+
+def _club_site(name: str) -> str | None:
+    """A football club's official website from Wikidata (P856), cached between runs."""
+    global _club_cache
+    if _club_cache is None:
+        _club_cache = common.load_json(CLUB_SITES, {})
+    if name in _club_cache:
+        return _club_cache[name]
+    url = None
+    try:
+        found = (common.get(WIKIDATA, params={"action": "wbsearchentities", "search": name, "language": "en",
+                                               "type": "item", "limit": 5, "format": "json"}) or {}).get("search") or []
+        kinds = ("football club", "sports club", "football team", "soccer club", "multi-sport club")
+        club = next((x for x in found if any(k in (x.get("description") or "").lower() for k in kinds)), None)
+        if club:
+            ent = (common.get(WIKIDATA, params={"action": "wbgetentities", "ids": club["id"], "props": "claims",
+                                                 "format": "json"}) or {}).get("entities", {}).get(club["id"], {})
+            sites = [c["mainsnak"]["datavalue"]["value"] for c in ent.get("claims", {}).get("P856", [])
+                     if c.get("mainsnak", {}).get("datavalue")]
+            url = sites[0] if sites else None
+    except (common.FetchError, KeyError, TypeError) as exc:
+        common.log(f"club site {name}: {exc}")
+        return None   # not cached: try again next run
+    _club_cache[name] = url
+    common.save_json(CLUB_SITES, _club_cache)
+    time.sleep(0.5)
+    return url
+
 
 def _strength(record: str | None, soccer: bool) -> float | None:
     """Share of the points a team has won this season (soccer W-D-L as points per game)."""
@@ -83,9 +145,11 @@ def _espn_games(league: str, path: str, now) -> list[dict]:
             tv = sorted({n for b in c.get("broadcasts") or [] for n in b.get("names") or []})
             # soccer: ESPN lists a US streamer for nearly every match, so TV says nothing about importance there
             tv_bonus = 0.15 if national and not soccer else 0
-            score = (sum(known) / len(known) + 0.5 * min(known) if known else 0.4) + tv_bonus
             home = next((t for t in teams if t.get("homeAway") == "home"), {})
             away = next((t for t in teams if t.get("homeAway") == "away"), {})
+            names = {((t.get("team") or {}).get("displayName") or "") for t in (home, away)}
+            big = names & BIG_CLUBS.get(path, set())
+            score = (sum(known) / len(known) + 0.5 * min(known) if known else 0.4) + tv_bonus + BIG_CLUB_BONUS * len(big)
             recs = [f"{(t.get('team') or {}).get('shortDisplayName') or (t.get('team') or {}).get('displayName')} "
                     f"{((t.get('records') or [{}])[0]).get('summary')}" for t in (away, home) if (t.get("records") or [{}])[0].get("summary")]
             games.append({
@@ -94,8 +158,10 @@ def _espn_games(league: str, path: str, now) -> list[dict]:
                 "image": ((home.get("team") or {}).get("logo")) or ((away.get("team") or {}).get("logo")),
                 "image2": (away.get("team") or {}).get("logo"),
                 "url": ((e.get("links") or [{}])[0]).get("href"), "score": score, "offset": offset,
+                "home": (home.get("team") or {}).get("displayName"),
                 "why": ("Season records: " + ", ".join(recs) if recs else "Next scheduled game")
-                       + (f"; on {', '.join(tv)}" if tv else "") + (" (national TV)" if national and not soccer else "") + ".",
+                       + (f"; on {', '.join(tv)}" if tv else "") + (" (national TV)" if national and not soccer else "")
+                       + (f"; big club{'s' if len(big) > 1 else ''}: {', '.join(sorted(big))}" if big else "") + ".",
             })
         time.sleep(0.2)
     window = [g for g in games if g["offset"] < 7]
@@ -184,10 +250,17 @@ def build(now=None) -> dict:
         for i, g in enumerate(got):
             g.pop("score", None)
             g.pop("offset", None)
+            home = g.pop("home", None)
+            site = _club_site(home) if home and ref.startswith("soccer/") else None
+            if site:
+                g["tickets"] = {"name": f"{home} official site", "url": site}
+            elif TICKETS.get(league):
+                g["tickets"] = {"name": TICKETS[league][0], "url": TICKETS[league][1]}
             events.append({**g, "id": common.fingerprint(f"{league}|{g['title']}|{g['when']}"), "icon": icon,
                            "rank": i + 1, "source": "ESPN" if source == "espn" else "TheSportsDB"})
         if not got:
             empty.append(league)
         common.log(f"upcoming {league}: {len(got)}")
     return {"icon": "📅", "name": "Upcoming", "leagues": [l[0] for l in LEAGUES], "events": events,
+            "tickets": {k: {"name": v[0], "url": v[1]} for k, v in TICKETS.items() if v},
             "off_season": empty, "built_at": common.iso(now)}
