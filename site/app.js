@@ -621,7 +621,7 @@ function crossView(up, rows, kind, route) {
   const all = withState(up), dayAgo = Date.now() - 24 * 3600e3;
   const list = kind === "finished"
     ? all.filter((e) => e.status === "finished" && e.ended >= dayAgo).sort((a, b) => String(b.when).localeCompare(String(a.when)))
-    : all.filter(isToday).sort((a, b) => String(a.when).localeCompare(String(b.when)));
+    : all.filter((e) => isToday(e) || e.status === "live").sort((a, b) => String(a.when).localeCompare(String(b.when)));
   paintGroups(list, { finished: "No games finished in the last 24 hours.", today: "Nothing scheduled today." }[kind]);
   return ["sports", route];
 }
