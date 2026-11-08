@@ -155,6 +155,12 @@ def _espn_boxing(league: str, story_id: str, now) -> list[dict]:
         first = next((n for n in BOX_CHANNELS if n.lower() in tv.lower()), None)
         ev = {"league": league, "title": bout, "when": common.iso(c["when"]), "venue": c["place"], "date_only": True,
               "image": None, "url": "https://www.espn.com/boxing/story/_/id/12508267/boxing-schedule", "why": why}
+        # tickets (owner, 9 Nov 2026): a Ticketmaster search for the headliners' surnames, e.g. "Fury Joshua"
+        sides = [re.sub(r"\(.*?\)|[^A-Za-z' -]", " ", x).split() for x in re.split(r"\s+vs?\.?\s+", bout, flags=re.I)]
+        names = [w[-1] for w in sides if w][:2]
+        if names:
+            ev["tickets"] = {"name": "Ticketmaster: " + " vs ".join(names),
+                             "url": "https://www.ticketmaster.com/search?q=" + "%20".join(names)}
         ev["watch"] = ({"name": tv, "url": BOX_CHANNELS[first] if first else None} if tv
                        else {"name": "DAZN (subscription; this card's channel not announced yet)", "url": "https://www.dazn.com/"})
         out.append(ev)

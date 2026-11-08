@@ -744,7 +744,7 @@ function upcomingView(up, rows, q, group, route) {
     n.innerHTML += t
       ? ` <b>Tickets:</b> <a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.name)}</a>.`
       : group === "football" ? " <b>Tickets:</b> sold by each home club on its official site (linked on every game)."
-      : league === "Boxing" ? " <b>Tickets:</b> sold by each card's promoter." : "";
+      : league === "Boxing" ? " <b>Tickets:</b> each card links a Ticketmaster search for its fighters (cards sold elsewhere, e.g. Riyadh Season, won't show there)." : "";
     n.innerHTML += w ? ` <b>Watch:</b> <a href="${esc(w.url)}" target="_blank" rel="noopener">${esc(w.name)}</a>.`
       : league === "Boxing" ? " <b>Watch:</b> the channel is named on each card." : "";
   }
