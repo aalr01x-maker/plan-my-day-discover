@@ -525,7 +525,7 @@ syncTopHeight();
 
 /* ---------- Sports ---------- */
 async function sports(parts, q) {
-  const data = await load("sports");
+  const [data] = await Promise.all([load("sports"), loadScores()]);
   const up = data.upcoming;
   // Owner, 8 Nov 2026: Upcoming tabs on the top row (football, NBA, NHL, NFL, MLB, more sports; a league out
   // of season hides its tab), the sport tabs on the row under them, then the league filter.
@@ -585,13 +585,40 @@ const LENGTH = { football: 115, nba: 150, nhl: 150, nfl: 200, mlb: 180, UFC: 300
 const lengthOf = (e) => (LENGTH[e.league] || LENGTH[groupOf(e)] || 180) * 60e3;
 const hhmm = (ms) => new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 // every game with its state right now: upcoming, on now (by the clock) or finished (score from the noon run)
+// Real scores every 15 minutes (owner, 9 Nov 2026): data/scores.json, written by a small GitHub job from
+// ESPN (live with the game clock, final with the score, postponed). Used while it's under an hour old;
+// otherwise, and for sports ESPN doesn't cover, the state is worked out from the start time as before.
+let liveScores = null;
+async function loadScores() {
+  try {
+    const r = await fetch(`data/scores.json?t=${Date.now()}`, { cache: "no-store" });
+    const d = r.ok ? await r.json() : null;
+    liveScores = d && Date.now() - Date.parse(d.built_at) < 60 * 60e3 ? d : null;
+  } catch { liveScores = null; }
+  return liveScores;
+}
+// while a sports page is open, check for new scores every 2 minutes and redraw in place when they changed
+setInterval(async () => {
+  const { parts, q } = parse();
+  if (parts[0] !== "sports" || !$("sheet").hidden || ($("search").value || "").trim()) return;
+  const before = liveScores && liveScores.built_at;
+  await loadScores();
+  if ((liveScores && liveScores.built_at) !== before) { const y = scrollY; await VIEWS.sports(parts, q); scrollTo(0, y); }
+}, 120e3);
 function withState(up) {
   const now = Date.now(), seen = new Set(), out = [];
-  for (const e of [...(up.recent || []), ...up.events]) {
+  const real = (liveScores ? liveScores.games : []).map((g) => ({ ...g, real: true }));
+  for (const e of [...real, ...(up.recent || []), ...up.events]) {
     const k = `${e.league}|${e.title}`;
     if (seen.has(k)) continue;
     seen.add(k);
     const start = Date.parse(e.when);
+    if (e.real) {
+      if (e.off) out.push({ ...e, status: "finished", score: "", off: e.off, ended: start });
+      else if (e.done) out.push({ ...e, status: "finished", score: e.final || "", ended: Math.min(start + lengthOf(e), now) });
+      else out.push({ ...e, status: "live", score: e.final || "", clock: e.clock || "" });
+      continue;
+    }
     if (e.date_only || !(start <= now)) { out.push(e); continue; }
     const end = start + lengthOf(e);
     if (e.done || end <= now) out.push({ ...e, status: "finished", score: e.final || "", ended: Math.min(end, now) });
@@ -615,8 +642,8 @@ function crossView(up, rows, kind, route) {
   chips([], [], () => {});
   sportStrip(null);
   heading("sports", [{ finished: "Finished", today: "Today" }[kind], "All sports"]);
-  note({ finished: "Every game that finished in the last 24 hours, across all sports, newest first. Final scores come with the daily update at 12:00 noon Kuwait time, so a game that ended after it shows its score from the next update.",
-    today: "Everything on today across all sports, by start time. A game is marked 🔴 On now from its start time until its usual length has passed, and ✅ when it's over. Final scores come with the daily update at 12:00 noon Kuwait time." }[kind]
+  note({ finished: "Every game that finished in the last 24 hours, across all sports, newest first, with final scores from ESPN (updated every 15 minutes).",
+    today: "Everything on today across all sports, by start time: 🔴 LIVE with the game clock and score while it's on, ✅ Final when it's over (ESPN scores, updated every 15 minutes). Snooker, pool and boxing show their day." }[kind]
     + " Grouped by sport. Times are shown in your time zone.");
   const all = withState(up), dayAgo = Date.now() - 24 * 3600e3;
   const list = kind === "finished"
@@ -740,8 +767,9 @@ function upcomingCard(e) {
     ? `<div class="vs-logos">${img(e.image2, "vs-logo", "")}<span>vs</span>${img(e.image, "vs-logo", "")}</div>`
     : e.image ? `<div class="vs-logos">${img(e.image, "vs-logo wide", "")}</div>` : "";
   const d = daysAway(e.when);
-  const pill = e.status === "live" ? `<span class="badge st-live">🔴 On now${e.clock ? " · " + esc(e.clock) : ""}</span>`
-    : e.status === "finished" ? `<span class="badge st-done">✅ ${e.score ? "Final" : "Ended · score with the next noon update"}</span>`
+  const pill = e.status === "live" ? `<span class="badge st-live">🔴 ${e.real ? "LIVE" : "On now"}${e.clock ? " · " + esc(e.clock) : ""}</span>`
+    : e.off ? `<span class="badge st-done">⏸️ ${esc(e.off)}</span>`
+    : e.status === "finished" ? `<span class="badge st-done">✅ ${e.score ? "Final" : "Ended · score coming shortly"}</span>`
     : d > 7 ? `<span class="badge st-later">📆 In ${d} days</span>` : "";
   const score = e.score ? `<div class="score">${esc(e.score)}</div>` : "";
   return `<article class="card${e.status ? " card-" + e.status : ""}" tabindex="0" data-item="${esc(e.id)}">${logos}

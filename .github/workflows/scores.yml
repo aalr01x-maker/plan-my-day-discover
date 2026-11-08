@@ -1,0 +1,83 @@
+name: Live scores
+
+# Owner, 9 Nov 2026: real sports scores every 15 minutes (live with the game clock, finals, postponed),
+# sports only. Free: GitHub doesn't count minutes for a public repo. ESPN refuses requests from browsers,
+# so this job fetches the scores and publishes data/scores.json next to the live site's other files.
+#
+# Safe by design:
+#  - it never rebuilds the other sections: it downloads the files that are live right now and redeploys
+#    them unchanged, with only scores.json new;
+#  - it skips while the daily refresh is running and checks again right before deploying, so it can never
+#    put back older daily data over a newer daily deploy;
+#  - it deploys only when a score or state actually changed (Firebase keeps the newest 150 versions).
+on:
+  schedule:
+    - cron: "4,19,34,49 * * * *"   # every 15 min, off the top of the hour when GitHub is busiest
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: scores
+  cancel-in-progress: false
+
+jobs:
+  scores:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SITE: https://plan-my-day-discover.web.app
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip while the daily refresh runs
+        id: gate
+        run: |
+          busy=$(gh api "repos/${{ github.repository }}/actions/workflows/refresh.yml/runs?per_page=5" \
+            --jq '[.workflow_runs[] | select(.status != "completed")] | length')
+          echo "daily refresh runs in progress: $busy"
+          echo "go=$([ "$busy" = "0" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.go == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Fetch scores and the live site's data
+        if: steps.gate.outputs.go == 'true'
+        id: build
+        run: |
+          pip install -q requests==2.32.3
+          mkdir -p site/data
+          # the files that are live right now; every one must download and parse, or nothing is deployed
+          for f in meta news movies games music sports scores; do
+            if curl -sfL "$SITE/data/$f.json?t=$(date +%s)" -o "site/data/$f.json"; then
+              python -c "import json,sys; json.load(open(sys.argv[1]))" "site/data/$f.json" || { echo "bad $f.json"; exit 1; }
+            elif [ "$f" = scores ]; then rm -f site/data/scores.json
+            else echo "could not download $f.json"; exit 1; fi
+          done
+          python -c "import json; print(json.load(open('site/data/sports.json'))['upcoming']['built_at'])" > "$RUNNER_TEMP/daily_built"
+          state=$(python -m pipeline.scores | tail -1)
+          echo "scores: $state"
+          echo "changed=$([ "$state" = changed ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy (only when scores changed and no daily deploy happened meanwhile)
+        if: steps.gate.outputs.go == 'true' && steps.build.outputs.changed == 'true'
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          busy=$(gh api "repos/${{ github.repository }}/actions/workflows/refresh.yml/runs?per_page=5" \
+            --jq '[.workflow_runs[] | select(.status != "completed")] | length')
+          now_built=$(curl -sfL "$SITE/data/sports.json?t=$(date +%s)" | python -c "import json,sys; print(json.load(sys.stdin)['upcoming']['built_at'])")
+          if [ "$busy" != "0" ] || [ "$now_built" != "$(cat "$RUNNER_TEMP/daily_built")" ]; then
+            echo "the daily refresh started or deployed meanwhile; skipping this round"; exit 0
+          fi
+          echo "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx --yes firebase-tools@14 deploy --only hosting --project plan-my-day-4ba6b --non-interactive \
+            -m "live scores ${{ github.run_id }}"
+          rm -f "$RUNNER_TEMP/sa.json"

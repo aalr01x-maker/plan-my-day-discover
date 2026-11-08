@@ -92,6 +92,11 @@ jobs:
           git commit -q -m "state $(date -u +%FT%TZ)"
           git push -q -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" state:state
 
+      # the live-scores file (written every 15 min by scores.yml) is part of the site, so the daily
+      # deploy writes a fresh one instead of dropping it
+      - name: Live scores
+        run: python -m pipeline.scores || true
+
       - name: Deploy to Firebase Hosting (discovery site only)
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

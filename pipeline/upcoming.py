@@ -466,7 +466,7 @@ def _espn_recent(league: str, path: str, now) -> list[dict]:
         for e in _espn_day(path, (now + timedelta(days=offset)).strftime("%Y%m%d")):
             st = ((e.get("status") or {}).get("type") or {})
             start = common.parse_time(e.get("date"))
-            if e.get("id") in seen or st.get("state") not in ("in", "post") or not start or start < now - timedelta(hours=30):
+            if e.get("id") in seen or st.get("state") not in ("in", "post") or not start or start < now - timedelta(hours=30) or start > now:
                 continue
             seen.add(e.get("id"))
             c = (e.get("competitions") or [{}])[0]
@@ -475,13 +475,15 @@ def _espn_recent(league: str, path: str, now) -> list[dict]:
             away = next((t for t in teams if t.get("homeAway") == "away"), teams[1] if len(teams) > 1 else {})
             nm = lambda t: (t.get("team") or {}).get("shortDisplayName") or (t.get("team") or {}).get("displayName") or (t.get("athlete") or {}).get("displayName") or ""
             score = ""
-            if st.get("state") == "post" and len(teams) == 2 and home.get("score") is not None and away.get("score") is not None:
+            if len(teams) == 2 and home.get("score") is not None and away.get("score") is not None:   # live or final
                 score = f"{nm(home)} {home.get('score')} – {away.get('score')} {nm(away)}"
             out.append({"league": league, "title": e.get("name") or e.get("shortName"), "when": e.get("date"),
                         "venue": (c.get("venue") or {}).get("fullName"),
                         "image": (home.get("team") or {}).get("logo"), "image2": (away.get("team") or {}).get("logo"),
                         "url": ((e.get("links") or [{}])[0]).get("href"), "final": score,
-                        "done": st.get("state") == "post"})
+                        "done": st.get("state") == "post", "clock": st.get("shortDetail") or st.get("detail") or "",
+                        "off": (st.get("name") or "").replace("STATUS_", "").title()
+                               if st.get("name") in ("STATUS_POSTPONED", "STATUS_CANCELED", "STATUS_SUSPENDED", "STATUS_ABANDONED") else ""})
         time.sleep(0.2)
     return out
 
