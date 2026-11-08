@@ -897,6 +897,9 @@ async function route() {
     skeleton();
     if (section !== "search") await showMeta(section);
     try {
+      // the Sports-only row and layout never carry over into another section (owner, 9 Nov 2026)
+      document.body.dataset.section = section;
+      if (section !== "sports") sportStrip(null);
       const canonical = await VIEWS[section](parts, q);
       if (section !== "search" && canonical) {
         const want = href(canonical.filter(Boolean), listQ);
