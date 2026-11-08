@@ -61,7 +61,7 @@ jobs:
             else echo "could not download $f.json"; exit 1; fi
           done
           python -c "import json; print(json.load(open('site/data/sports.json'))['upcoming']['built_at'])" > "$RUNNER_TEMP/daily_built"
-          state=$(python -m pipeline.scores | tail -1)
+          state=$(python -m pipeline.scores | grep -xE "changed|same" | tail -1)
           echo "scores: $state"
           echo "changed=$([ "$state" = changed ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
 
