@@ -100,6 +100,39 @@ class YouTube:
         self.cache["search"][key] = {"at": common.iso(common.now_utc()), "items": items}
         return items
 
+    def top_music(self, pages: int = 4, max_age_days: int = 7, query: str | None = None) -> list[dict]:
+        """YouTube's most-viewed music videos of all time (Music category, sorted by views), up to 50 per
+        page; 100 units a page, reused for a week (owner, 9 Nov 2026: Music "All" ranks the real top)."""
+        if not self.key:
+            return []
+        key = f"__top_music__|{pages}|{query or ''}"
+        hit = self.cache["search"].get(key)
+        if hit and common.within(common.parse_time(hit["at"]), max_age_days * 24):
+            return hit["items"]
+        items, token = [], None
+        for _ in range(pages):
+            params = {"part": "snippet", "type": "video", "videoCategoryId": "10", "order": "viewCount",
+                      "maxResults": 50, "key": self.key, "videoEmbeddable": "true"}
+            if query:
+                params["q"] = query
+            if token:
+                params["pageToken"] = token
+            try:
+                data = self.get("search", params)
+            except common.FetchError as exc:
+                common.log(f"youtube top music: {exc}")
+                break
+            self.units += 100
+            items += [{"id": i["id"]["videoId"], "title": i["snippet"]["title"], "published": i["snippet"].get("publishedAt"),
+                       "channel": i["snippet"].get("channelTitle"), "channel_id": i["snippet"].get("channelId")}
+                      for i in data.get("items", []) if i.get("id", {}).get("videoId")]
+            token = data.get("nextPageToken")
+            if not token:
+                break
+        if items:
+            self.cache["search"][key] = {"at": common.iso(common.now_utc()), "items": items}
+        return items
+
     def save(self) -> None:
         searches = self.cache["search"]
         if len(searches) > 3000:

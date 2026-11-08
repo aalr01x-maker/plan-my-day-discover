@@ -650,6 +650,93 @@ def _renumber(cards: list[dict], keep_why: bool = False) -> list[dict]:
     return cards
 
 
+KIDS = re.compile(r"cocomelon|pinkfong|baby shark|chuchu|looloo|little baby bum|super simple|bounce patrol|nursery|"
+                  r"\bkids\b|for children|wheels on the bus|johny johny|toddler|infantil|bebefinn|masha", re.I)
+BRACKETS = re.compile(r"\s*[\(\[][^\)\]]*(official|video|audio|lyric|visuali[sz]er|mv|m/v|4k|hd|remaster)[^\)\]]*[\)\]]", re.I)
+
+
+# Best of All Time per genre from YouTube alone (owner, 9 Nov 2026): YouTube's most-viewed music videos
+# for the genre, kept only when YouTube's own topic labels on the video name that genre.
+YT_GENRE = {
+    "rap": ("hip hop rap", "Hip_hop_music"), "trap": ("trap music", "Hip_hop_music"),
+    "conscious-rap": ("conscious rap", "Hip_hop_music"), "rock": ("rock", "Rock_music"),
+    "alternative": ("alternative rock", "Rock_music"), "rnb": ("r&b", "Rhythm_and_blues|Soul_music"),
+    "edm-techno": ("edm techno", "Electronic_music"), "house": ("house music", "Electronic_music"),
+    "progressive-house": ("progressive house", "Electronic_music"), "indie-electro": ("indie electronic", "Electronic_music"),
+    "nu-disco": ("nu disco", "Electronic_music"), "retrowave": ("retrowave synthwave", "Electronic_music"),
+    "chillwave-trip-hop": ("chillwave trip hop", "Electronic_music"), "country": ("country", "Country_music"),
+    "jazz": ("jazz", "Jazz"), "electro-jazz-soul": ("electro soul jazz", "Jazz|Soul_music|Electronic_music"),
+    "classical": ("classical music", "Classical_music"), "blues": ("blues", "Rhythm_and_blues|Soul_music|Rock_music"),
+    "reggae": ("reggae", "Reggae"), "indie": ("indie", "Independent_music"), "ambient-pop": ("ambient pop", "Pop_music|Electronic_music"),
+    "arabic": ("arabic music", None),   # YouTube has no Arabic topic: Arabic script in the title or channel instead
+}
+ARABIC = re.compile(r"[\u0600-\u06FF]")
+GENRE_TOP_PER_RUN = [44]   # genre search pages per run (100 units each, reused for a week)
+
+
+def _topics(yt: YouTube, ids: list[str]) -> dict[str, str]:
+    """YouTube's topic labels per video (1 unit per 50 videos)."""
+    out = {}
+    for i in range(0, len(ids), 50):
+        try:
+            data = yt.get("videos", {"part": "topicDetails", "id": ",".join(ids[i:i + 50])})
+            yt.units += 1
+        except common.FetchError as exc:
+            common.log(f"youtube topics: {exc}")
+            continue
+        for item in data.get("items", []):
+            out[item["id"]] = " ".join((item.get("topicDetails") or {}).get("topicCategories") or [])
+    return out
+
+
+def _genre_fits(gid: str, topics: str, v: dict) -> bool:
+    if gid == "all":
+        return True
+    q, topic = YT_GENRE.get(gid, (None, None))
+    if gid == "arabic":
+        return bool(ARABIC.search(f"{v.get('title')} {v.get('channel')}"))
+    return bool(topic and re.search(topic, topics or ""))
+
+
+def _global_top(yt: YouTube | None, gid: str = "all") -> list[dict]:
+    """YouTube's most-viewed music videos of all time (for a genre: its search, kept only when YouTube's
+    topics name the genre) as songs (artist from "Artist - Title", else the channel name), official
+    uploads only; kids' nursery channels left out."""
+    if not yt or not yt.available:
+        return []
+    if gid == "all":
+        found = yt.top_music()
+    else:
+        q = YT_GENRE.get(gid, (None,))[0]
+        if not q:
+            return []
+        key = f"__top_music__|2|{q}"
+        cached = yt.cache["search"].get(key)
+        fresh = cached and common.within(common.parse_time(cached["at"]), 7 * 24)
+        if not fresh and GENRE_TOP_PER_RUN[0] <= 0:
+            found = cached["items"] if cached else []   # this week's searches are used up: last week's list
+        else:
+            if not fresh:
+                GENRE_TOP_PER_RUN[0] -= 2
+            found = yt.top_music(pages=2, query=q)
+    top = [v for v in found if not KIDS.search(f"{v.get('channel')} {v['title']}") and not NOT_OFFICIAL.search(v["title"])]
+    topics = _topics(yt, [v["id"] for v in top]) if top and gid != "all" else {}
+    top = [v for v in top if _genre_fits(gid, topics.get(v["id"], ""), v)]
+    stats = _youtube_views(yt, [v["id"] for v in top]) if top else {}
+    out = []
+    for v in top:
+        if not stats.get(v["id"]):
+            continue
+        name = BRACKETS.sub("", v["title"]).strip()
+        channel = re.sub(r"(?i)vevo$|\s*-\s*topic$|\s*official$", "", (v.get("channel") or "").strip()).strip()
+        artist, title = (name.split(" - ", 1) if " - " in name else (channel, name))
+        out.append({"mbid": f"yt:{v['id']}", "artist": artist.strip(), "title": title.strip(), "fit": 1.0,
+                    "released": (v.get("published") or "")[:10],
+                    "yt": {"id": v["id"], "title": v["title"], "channel": v.get("channel"), "published": v.get("published"),
+                           "views": stats[v["id"]]}})
+    return out
+
+
 def _links(song: dict, apple: dict | None) -> list[dict]:
     q = quote_plus(f"{song['artist']} {song['title']}")
     links = []
@@ -661,7 +748,7 @@ def _links(song: dict, apple: dict | None) -> list[dict]:
     ]
     if song.get("deezer"):
         links.append({"name": "Deezer", "url": song["deezer"]})
-    elif not str(song["mbid"]).startswith("dz:"):
+    elif not str(song["mbid"]).startswith(("dz:", "yt:")):
         links.append({"name": "ListenBrainz", "url": f"https://listenbrainz.org/player/?recording_mbids={song['mbid']}"})
     return links
 
@@ -889,8 +976,16 @@ def build(yt: YouTube | None = None) -> dict:
         pool = {}
         for x in at + rc + tr:
             pool.setdefault(skey(x), x)
+        a_rows = [{**x, "yt": yt_of(x)} for x in pool.values() if yt_of(x)]   # YouTube only, no Last.fm check (owner)
+        # Best of All Time from YouTube alone (owner, 9 Nov 2026): YouTube's most-viewed music videos
+        # (for a genre, only those YouTube's own topics put in it), together with the songs found before
+        # when YouTube's topics agree on their genre too; ranked by views
+        a_rows += _global_top(yt, gid)
+        if gid != "all" and yt and yt.available:
+            tp = _topics(yt, [x["yt"]["id"] for x in a_rows])
+            a_rows = [x for x in a_rows if _genre_fits(gid, tp.get(x["yt"]["id"], ""), x["yt"])]
         seen_vid: set = set()   # one entry per YouTube video, even if two candidates point to it
-        a_rows = [x for x in with_yt(list(pool.values())) if not (x["yt"]["id"] in seen_vid or seen_vid.add(x["yt"]["id"]))]
+        a_rows = [x for x in a_rows if not (x["yt"]["id"] in seen_vid or seen_vid.add(x["yt"]["id"]))]
         r_rows = [x for x in with_yt(rc) if _posted_since(x["yt"], video_cut)]
         max_a = max((x["yt"]["views"] for x in a_rows), default=1)
         max_r = max((x["yt"]["views"] for x in r_rows), default=1)
