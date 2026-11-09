@@ -690,8 +690,10 @@ def _topics(yt: YouTube, ids: list[str]) -> dict[str, str]:
     return out
 
 
-def _genre_fits(gid: str, topics: str, v: dict) -> bool:
+def _genre_fits(gid: str, topics: str | None, v: dict) -> bool:
     if gid == "all":
+        return True
+    if topics is None:   # YouTube's labels couldn't be read (e.g. quota used up): never drop a song for that
         return True
     q, topic = YT_GENRE.get(gid, (None, None))
     if gid == "arabic":
@@ -760,7 +762,7 @@ def _global_top(yt: YouTube | None, gid: str = "all") -> list[dict]:
     top = [v for v in found if not KIDS.search(f"{v.get('channel')} {v['title']}") and not NOT_OFFICIAL.search(v["title"])
            and v["title"].count("#") < 2]
     topics = _topics(yt, [v["id"] for v in top]) if top and gid != "all" else {}
-    top = [v for v in top if _genre_fits(gid, topics.get(v["id"], ""), v)]
+    top = [v for v in top if _genre_fits(gid, topics.get(v["id"]), v)]
     stats = _youtube_views(yt, [v["id"] for v in top]) if top else {}
     out = []
     for v in top:
@@ -1022,7 +1024,8 @@ def build(yt: YouTube | None = None) -> dict:
         a_rows += _global_top(yt, gid)
         if gid != "all" and yt and yt.available:
             tp = _topics(yt, [x["yt"]["id"] for x in a_rows])
-            a_rows = [x for x in a_rows if _genre_fits(gid, tp.get(x["yt"]["id"], ""), x["yt"])]
+            # songs found before keep their place unless YouTube's labels clearly name other genres
+            a_rows = [x for x in a_rows if _genre_fits(gid, tp.get(x["yt"]["id"]) or None, x["yt"])]
         seen_vid: set = set()   # one entry per YouTube video, even if two candidates point to it
         a_rows = [x for x in a_rows if not (x["yt"]["id"] in seen_vid or seen_vid.add(x["yt"]["id"]))]
         r_rows = [x for x in with_yt(rc) if _posted_since(x["yt"], video_cut)]

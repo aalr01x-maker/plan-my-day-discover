@@ -56,6 +56,14 @@ def main(argv: list[str]) -> int:
             n = _count(data, section)
             if n < MINIMUM[section]:
                 raise RuntimeError(f"validation failed: only {n} items (minimum {MINIMUM[section]})")
+            # never publish a list that collapsed (e.g. YouTube's quota ran out mid-run; owner, 9 Nov 2026:
+            # music fell from 610 songs to 37): under 60% of the last valid run keeps the last valid data
+            try:
+                before = _count(common.load_json(LAST / f"{section}.json", {}), section)
+            except Exception:
+                before = 0
+            if before and n < 0.6 * before:
+                raise RuntimeError(f"validation failed: {n} items, down from {before} last time (kept the last valid data)")
             data["generated_at"] = common.iso(common.now_utc())
             common.save_json(LAST / f"{section}.json", data)
             entry.update({"updated_at": data["generated_at"], "ok": True, "error": None, "items": n})
