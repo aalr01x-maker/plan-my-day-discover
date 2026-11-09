@@ -651,7 +651,8 @@ def _renumber(cards: list[dict], keep_why: bool = False) -> list[dict]:
 
 
 KIDS = re.compile(r"cocomelon|pinkfong|baby shark|chuchu|looloo|little baby bum|super simple|bounce patrol|nursery|"
-                  r"\bkids\b|for children|wheels on the bus|johny johny|toddler|infantil|bebefinn|masha", re.I)
+                  r"\bkids\b|kidi|for children|wheels on the bus|johny johny|toddler|infantil|bebefinn|masha|enfants|"
+                  r"apprendre|ni[ñn]os|kinder|abc song|phonics|learn colou?rs|learn english|vocabulary|vocabulaire", re.I)
 BRACKETS = re.compile(r"\s*[\(\[][^\)\]]*(official|video|audio|lyric|visuali[sz]er|mv|m/v|4k|hd|remaster)[^\)\]]*[\)\]]", re.I)
 
 
@@ -719,7 +720,10 @@ def _global_top(yt: YouTube | None, gid: str = "all") -> list[dict]:
             if not fresh:
                 GENRE_TOP_PER_RUN[0] -= 2
             found = yt.top_music(pages=2, query=q)
-    top = [v for v in found if not KIDS.search(f"{v.get('channel')} {v['title']}") and not NOT_OFFICIAL.search(v["title"])]
+    found = [{**v, "title": html.unescape(v["title"]), "channel": html.unescape(v.get("channel") or "")} for v in found]
+    # kids' videos and hashtag-stuffed uploads (#apprendre #enfants ...) aren't songs
+    top = [v for v in found if not KIDS.search(f"{v.get('channel')} {v['title']}") and not NOT_OFFICIAL.search(v["title"])
+           and v["title"].count("#") < 2]
     topics = _topics(yt, [v["id"] for v in top]) if top and gid != "all" else {}
     top = [v for v in top if _genre_fits(gid, topics.get(v["id"], ""), v)]
     stats = _youtube_views(yt, [v["id"] for v in top]) if top else {}
@@ -1048,6 +1052,28 @@ def build(yt: YouTube | None = None) -> dict:
         genres[gid] = {"name": name, "tags": tags, **lists, "notes": notes}
         common.progress("music", len(genres), len(prepared), gid)
         common.log(f"music {gid}: {len(songs)} songs; {len(lists['all_time'])}/{len(lists['recent'])}/{len(lists['trending'])}")
+
+    # "All" = the top of everything (owner, 9 Nov 2026): every genre's All Time songs and YouTube's global
+    # top together, ranked by views, at most 2 per artist (In Da Club 2.8B was in Rap but not in All)
+    if "all" in genres:
+        merged, seen_v = [], set()
+        for g in genres.values():
+            for c in g["all_time"]:
+                vid = (c.get("links") or [{}])[0].get("url")
+                if vid in seen_v or KIDS.search(f"{c['artist']} {c['title']}"):
+                    continue
+                seen_v.add(vid)
+                merged.append(c)
+        merged.sort(key=lambda c: c["metrics"]["views"], reverse=True)
+        per, top_all = {}, []
+        for c in merged:
+            a_key = common.norm(c["artist"])
+            if per.get(a_key, 0) < PER_ARTIST:
+                per[a_key] = per.get(a_key, 0) + 1
+                top_all.append({**c, "rank": len(top_all) + 1})
+            if len(top_all) >= list_size("all"):
+                break
+        genres["all"]["all_time"] = top_all
 
     common.log(f"music: {lookups[0]} songs looked up ({YOUTUBE_LOOKUPS - search_budget[0]} by search), "
                f"{len(ids)} videos tracked, {pending} songs still to look up")

@@ -10,6 +10,8 @@ published close to the event -- never an unrelated clip to fill space.
 """
 from __future__ import annotations
 
+import html
+
 from datetime import timedelta
 
 from . import common
@@ -123,8 +125,8 @@ class YouTube:
                 common.log(f"youtube top music: {exc}")
                 break
             self.units += 100
-            items += [{"id": i["id"]["videoId"], "title": i["snippet"]["title"], "published": i["snippet"].get("publishedAt"),
-                       "channel": i["snippet"].get("channelTitle"), "channel_id": i["snippet"].get("channelId")}
+            items += [{"id": i["id"]["videoId"], "title": html.unescape(i["snippet"]["title"]), "published": i["snippet"].get("publishedAt"),
+                       "channel": html.unescape(i["snippet"].get("channelTitle") or ""), "channel_id": i["snippet"].get("channelId")}
                       for i in data.get("items", []) if i.get("id", {}).get("videoId")]
             token = data.get("nextPageToken")
             if not token:
