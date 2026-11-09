@@ -699,6 +699,39 @@ def _genre_fits(gid: str, topics: str, v: dict) -> bool:
     return bool(topic and re.search(topic, topics or ""))
 
 
+WIKI_TOP = "https://en.wikipedia.org/w/api.php"
+_WIKI_CACHE: dict = {}   # fetched once per run
+
+
+def _wiki_top(yt: YouTube) -> list[dict]:
+    """The videos on Wikipedia's "List of most-viewed YouTube videos" (Despacito, Shape of You, ...), music
+    category only, with YouTube's own title and channel. YouTube's search sorted by views returns kids'
+    clips and Shorts instead of these (owner, 9 Nov 2026: Despacito was missing from All). Wikipedia only
+    names the videos; views and ranking still come from YouTube."""
+    try:
+        text = common.get(WIKI_TOP, params={"action": "parse", "page": "List of most-viewed YouTube videos", "prop": "wikitext",
+                                            "format": "json", "formatversion": 2},
+                          headers={"User-Agent": "PlanMyDayDiscover/1.0 (personal schedule site)"})["parse"]["wikitext"]
+    except Exception as exc:
+        common.log(f"music: wikipedia top videos: {exc}")
+        return []
+    ids = list(dict.fromkeys(re.findall(r"(?:watch\?v=|youtu\.be/|\|id=|\{\{YouTube\|)([A-Za-z0-9_-]{11})", text)))
+    out = []
+    for i in range(0, len(ids), 50):
+        try:
+            data = yt.get("videos", {"part": "snippet", "id": ",".join(ids[i:i + 50])})
+            yt.units += 1
+        except common.FetchError as exc:
+            common.log(f"music: top video details: {exc}")
+            continue
+        for item in data.get("items", []):
+            sn = item.get("snippet") or {}
+            if sn.get("categoryId") == "10":   # Music
+                out.append({"id": item["id"], "title": html.unescape(sn.get("title") or ""), "published": sn.get("publishedAt"),
+                            "channel": html.unescape(sn.get("channelTitle") or ""), "channel_id": sn.get("channelId")})
+    return out
+
+
 def _global_top(yt: YouTube | None, gid: str = "all") -> list[dict]:
     """YouTube's most-viewed music videos of all time (for a genre: its search, kept only when YouTube's
     topics name the genre) as songs (artist from "Artist - Title", else the channel name), official
@@ -706,7 +739,7 @@ def _global_top(yt: YouTube | None, gid: str = "all") -> list[dict]:
     if not yt or not yt.available:
         return []
     if gid == "all":
-        found = yt.top_music()
+        found = _WIKI_CACHE.setdefault("top", _wiki_top(yt))
     else:
         q = YT_GENRE.get(gid, (None,))[0]
         if not q:
@@ -720,6 +753,8 @@ def _global_top(yt: YouTube | None, gid: str = "all") -> list[dict]:
             if not fresh:
                 GENRE_TOP_PER_RUN[0] -= 2
             found = yt.top_music(pages=2, query=q)
+    if gid != "all":   # the all-time biggest music videos count for their genres too (YouTube's topics decide)
+        found = found + _WIKI_CACHE.setdefault("top", _wiki_top(yt))
     found = [{**v, "title": html.unescape(v["title"]), "channel": html.unescape(v.get("channel") or "")} for v in found]
     # kids' videos and hashtag-stuffed uploads (#apprendre #enfants ...) aren't songs
     top = [v for v in found if not KIDS.search(f"{v.get('channel')} {v['title']}") and not NOT_OFFICIAL.search(v["title"])
