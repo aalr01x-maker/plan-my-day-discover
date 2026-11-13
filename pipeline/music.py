@@ -1013,20 +1013,30 @@ def build(yt: YouTube | None = None) -> dict:
         def core_artist(x) -> bool:
             """Owner, 2 Nov 2026 (MGMT and Viking music showed up in Rap): for the hip-hop genres the
             genre must be among the artist's TOP 5 Last.fm tags, not just anywhere in their tags."""
-            if gid not in CORE_TAGS or gid == "all":
+            # owner, 14 Nov 2026 ("most accurate regardless"): every genre now needs its own name among the
+            # artist's top 5 Last.fm tags (Uptown Funk was in Rap, Pompeii in House, AC/DC in Blues)
+            if gid in ("all", "arabic") or gid not in GENRE_CORE:
                 return True
             tags = _artist_tags_lastfm(x["artist"], key, artist_tags, tag_budget)
             if tags is None:
                 # unknown on Last.fm: YouTube-search finds ("Trap king", "Ragal Ironbull") stay out;
                 # database-sourced songs keep the earlier checks' verdict
                 return not str(x.get("mbid") or "").startswith("yt:")
-            return bool(re.search(CORE_TAGS[gid], " | ".join(tags.split(" | ")[:5])))
+            if not tags:
+                return False
+            top5 = " | ".join(tags.split(" | ")[:5])
+            if not re.search(CORE_TAGS.get(gid) or GENRE_CORE[gid], top5):
+                return False
+            # Conscious Rap: a hip-hop artist AND known for the conscious / jazz-rap side (any of their tags)
+            return gid != "conscious-rap" or bool(re.search(GENRE_CORE[gid], tags))
 
         def top(rows, score, n=20):
             per: dict[str, int] = {}
             out, songs_seen = [], set()
             for x in sorted(rows, key=score, reverse=True):
-                same = common.norm(x["artist"] + " " + re.split(r"[\(\[]| ft\.| feat", x["title"])[0]).strip()
+                # first word of the artist + title: "Bob Marley" and "Bob Marley & The Wailers" are one act
+                first = (common.norm(x["artist"]).split() or [""])[0]
+                same = common.norm(first + " " + re.split(r"[\(\[]| ft\.| feat", x["title"])[0]).strip()
                 if same in songs_seen:   # the same song uploaded twice (Tu Sin Mi) shows once
                     continue
                 songs_seen.add(same)
@@ -1046,7 +1056,7 @@ def build(yt: YouTube | None = None) -> dict:
         pool = {}
         for x in at + rc + tr:
             pool.setdefault(skey(x), x)
-        a_rows = [{**x, "yt": yt_of(x)} for x in pool.values() if yt_of(x)]   # YouTube only, no Last.fm check (owner)
+        a_rows = [{**x, "yt": yt_of(x)} for x in pool.values() if yt_of(x) and core_artist(x)]
         # Best of All Time from YouTube alone (owner, 9 Nov 2026): YouTube's most-viewed music videos
         # (for a genre, only those YouTube's own topics put in it), together with the songs found before
         # when YouTube's topics agree on their genre too; ranked by views
