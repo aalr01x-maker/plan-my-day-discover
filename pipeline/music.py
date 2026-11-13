@@ -187,7 +187,7 @@ DEEZER_ARAB_CHARTS = {"Egypt": 1362501615, "Saudi Arabia": 1362521285, "Morocco"
 ARABIC_SCRIPT = re.compile(r"[\u0600-\u06FF]")
 
 
-LASTFM_ARTIST_TAGS_PER_RUN = 800
+LASTFM_ARTIST_TAGS_PER_RUN = 1500
 
 
 def _artist_tags_lastfm(artist: str, key: str | None, cache: dict, budget: list[int]) -> str | None:
@@ -672,6 +672,26 @@ YT_GENRE = {
     "arabic": ("arabic music", None),   # YouTube has no Arabic topic: Arabic script in the title or channel instead
 }
 ARABIC = re.compile(r"[\u0600-\u06FF]")
+# Songs that come only from YouTube's most-viewed lists (no music database put them in the genre) must
+# have the genre itself among the ARTIST's top 5 Last.fm tags. YouTube's topic labels are too coarse
+# alone: "Electronic_music" let Despacito/Axel F into House and Retrowave, R&B/Rock let Shape of You into
+# Blues (owner, 14 Nov 2026: "do whatever's most accurate").
+GENRE_CORE = {
+    "rap": r"hip ?hop|\brap\b", "trap": r"\btrap\b|drill", "conscious-rap": r"conscious|jazz rap|alternative hip ?hop|underground hip ?hop",
+    "rock": r"rock|metal|grunge|punk", "alternative": r"alternative|grunge|post punk", "rnb": r"r&b|\brnb\b|soul|rhythm and blues",
+    "edm-techno": r"\bedm\b|techno|electro house|trance|dubstep|eurodance|big room|electronic dance",
+    "house": r"\bhouse\b", "progressive-house": r"progressive house|melodic house|organic house|deep house",
+    "indie-electro": r"indietronica|indie electronic|indie electronica|electroclash",
+    "nu-disco": r"nu ?disco|disco house|\bdisco\b", "retrowave": r"synthwave|retrowave|outrun|darksynth",
+    "chillwave-trip-hop": r"chillwave|trip ?hop|downtempo", "country": r"country|americana|bluegrass",
+    "jazz": r"jazz|swing|bebop", "electro-jazz-soul": r"nu jazz|electro swing|future soul|acid jazz|neo soul",
+    "classical": r"classical|baroque|composer|orchestral|\bopera\b|romantic|piano", "blues": r"blues",
+    "reggae": r"reggae|dancehall|\bdub\b|\bska\b", "indie": r"indie", "ambient-pop": r"dream ?pop|ambient|ethereal|shoegaze",
+}
+# compilations, study/sleep mixes and talent-show clips aren't songs (Classical/Jazz All Time had them)
+COMPILATION = re.compile(r"\b(best of|greatest hits|compilation|full album|playlist|hours of|\d+ ?(hours?|hrs?)|non ?stop|"
+                         r"medley|relaxing|background|for (study|studying|sleep|sleeping|work|relax)|chill ?out music|"
+                         r"prodigy|year old|got talent|audition)\b", re.I)
 GENRE_TOP_PER_RUN = [44]   # genre search pages per run (100 units each, reused for a week)
 
 
@@ -693,8 +713,8 @@ def _topics(yt: YouTube, ids: list[str]) -> dict[str, str]:
 def _genre_fits(gid: str, topics: str | None, v: dict) -> bool:
     if gid == "all":
         return True
-    if topics is None:   # YouTube's labels couldn't be read (e.g. quota used up): never drop a song for that
-        return True
+    if topics is None:   # YouTube's labels couldn't be read: no evidence, the song stays out
+        return False
     q, topic = YT_GENRE.get(gid, (None, None))
     if gid == "arabic":
         return bool(ARABIC.search(f"{v.get('title')} {v.get('channel')}"))
@@ -734,7 +754,8 @@ def _wiki_top(yt: YouTube) -> list[dict]:
     return out
 
 
-def _global_top(yt: YouTube | None, gid: str = "all") -> list[dict]:
+def _global_top(yt: YouTube | None, gid: str = "all", key: str | None = None, artist_tags: dict | None = None,
+                tag_budget: list[int] | None = None) -> list[dict]:
     """YouTube's most-viewed music videos of all time (for a genre: its search, kept only when YouTube's
     topics name the genre) as songs (artist from "Artist - Title", else the channel name), official
     uploads only; kids' nursery channels left out."""
@@ -760,7 +781,7 @@ def _global_top(yt: YouTube | None, gid: str = "all") -> list[dict]:
     found = [{**v, "title": html.unescape(v["title"]), "channel": html.unescape(v.get("channel") or "")} for v in found]
     # kids' videos and hashtag-stuffed uploads (#apprendre #enfants ...) aren't songs
     top = [v for v in found if not KIDS.search(f"{v.get('channel')} {v['title']}") and not NOT_OFFICIAL.search(v["title"])
-           and v["title"].count("#") < 2]
+           and v["title"].count("#") < 2 and not COMPILATION.search(v["title"])]
     topics = _topics(yt, [v["id"] for v in top]) if top and gid != "all" else {}
     top = [v for v in top if _genre_fits(gid, topics.get(v["id"]), v)]
     stats = _youtube_views(yt, [v["id"] for v in top]) if top else {}
@@ -771,6 +792,10 @@ def _global_top(yt: YouTube | None, gid: str = "all") -> list[dict]:
         name = BRACKETS.sub("", v["title"]).strip()
         channel = re.sub(r"(?i)vevo$|\s*-\s*topic$|\s*official$", "", (v.get("channel") or "").strip()).strip()
         artist, title = (name.split(" - ", 1) if " - " in name else (channel, name))
+        if gid not in ("all", "arabic"):
+            tags = _artist_tags_lastfm(artist.strip(), key, artist_tags if artist_tags is not None else {}, tag_budget or [0])
+            if not tags or not re.search(GENRE_CORE[gid], " | ".join(tags.split(" | ")[:5])):
+                continue   # the artist isn't known for this genre
         out.append({"mbid": f"yt:{v['id']}", "artist": artist.strip(), "title": title.strip(), "fit": 1.0,
                     "released": (v.get("published") or "")[:10],
                     "yt": {"id": v["id"], "title": v["title"], "channel": v.get("channel"), "published": v.get("published"),
@@ -999,8 +1024,12 @@ def build(yt: YouTube | None = None) -> dict:
 
         def top(rows, score, n=20):
             per: dict[str, int] = {}
-            out = []
+            out, songs_seen = [], set()
             for x in sorted(rows, key=score, reverse=True):
+                same = common.norm(x["artist"] + " " + re.split(r"[\(\[]| ft\.| feat", x["title"])[0]).strip()
+                if same in songs_seen:   # the same song uploaded twice (Tu Sin Mi) shows once
+                    continue
+                songs_seen.add(same)
                 if per.get(x["artist"], 0) < PER_ARTIST:
                     per[x["artist"]] = per.get(x["artist"], 0) + 1
                     out.append(x)
@@ -1021,11 +1050,13 @@ def build(yt: YouTube | None = None) -> dict:
         # Best of All Time from YouTube alone (owner, 9 Nov 2026): YouTube's most-viewed music videos
         # (for a genre, only those YouTube's own topics put in it), together with the songs found before
         # when YouTube's topics agree on their genre too; ranked by views
-        a_rows += _global_top(yt, gid)
         if gid != "all" and yt and yt.available:
             tp = _topics(yt, [x["yt"]["id"] for x in a_rows])
-            # songs found before keep their place unless YouTube's labels clearly name other genres
-            a_rows = [x for x in a_rows if _genre_fits(gid, tp.get(x["yt"]["id"]) or None, x["yt"])]
+            # songs the music databases put in the genre keep their place unless YouTube's labels clearly
+            # name other genres (no labels = keep: the database membership is the evidence)
+            a_rows = [x for x in a_rows if not tp.get(x["yt"]["id"]) or _genre_fits(gid, tp[x["yt"]["id"]], x["yt"])]
+        # YouTube-only finds were checked strictly in _global_top (YouTube labels AND the artist's tags)
+        a_rows += _global_top(yt, gid, key, artist_tags, tag_budget)
         seen_vid: set = set()   # one entry per YouTube video, even if two candidates point to it
         a_rows = [x for x in a_rows if not (x["yt"]["id"] in seen_vid or seen_vid.add(x["yt"]["id"]))]
         r_rows = [x for x in with_yt(rc) if _posted_since(x["yt"], video_cut)]
@@ -1060,7 +1091,9 @@ def build(yt: YouTube | None = None) -> dict:
             v = x["yt"]
             return {
                 "id": x["mbid"], "rank": rank, "title": x["title"], "artist": x["artist"], "album": x.get("album"),
-                "released": _earliest(x.get("released"), (apple or {}).get("released")),
+                # the official video's upload date counts too: a song can't be newer than its video
+                # (G.O.M.D, Tití Me Preguntó showed a 2026 reissue's date)
+                "released": _earliest(x.get("released"), (apple or {}).get("released"), (v.get("published") or "")[:10] or None),
                 "artwork": (apple or {}).get("artwork") or x.get("cover"),
                 "preview": (apple or {}).get("preview"),
                 "metrics": {"views": v["views"], "source": "YouTube", "channel": v.get("channel"), "genre_fit": round(x["fit"], 2)},
