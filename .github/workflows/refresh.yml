@@ -191,3 +191,31 @@ jobs:
           tail -n +3 note.md > body.md
           url=$(gh issue create --title "$title" --body-file body.md)
           gh issue close "$url" --reason completed >/dev/null || true
+
+      # Owner, 14 Nov 2026: a phone push (ntfy) when any update ends, sent by GitHub itself so it
+      # arrives even when the owner's Mac is asleep. The topic is a secret (the repo is public).
+      - name: Push to the owner's phone (ntfy)
+        if: always() && github.event.inputs.sections != 'sports'
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SECTIONS: ${{ github.event.inputs.sections }}
+          OUTCOME: ${{ job.status }}
+        run: |
+          [ -n "$NTFY_TOPIC" ] || { echo "NTFY_TOPIC secret not set"; exit 0; }
+          python - <<'PY' > push.txt
+          import json, os
+          secs = os.environ.get("SECTIONS", "").split()
+          try:
+              meta = json.load(open("state/last/meta.json")).get("sections") or {}
+          except Exception:
+              meta = {}
+          if os.environ["OUTCOME"] != "success":
+              print("The update didn't finish; the site keeps the previous lists.")
+          for s in (secs or list(meta)):
+              m = meta.get(s) or {}
+              print(f"{s}: {'updated' if m.get('ok') else 'kept previous lists'} ({m.get('items')} items)")
+          PY
+          what=$([ -n "$SECTIONS" ] && echo "$SECTIONS update" || echo "daily update")
+          state=$([ "$OUTCOME" = "success" ] && echo "done" || echo "FAILED")
+          curl -s -H "Title: Discover: $what $state" -H "Click: https://plan-my-day-discover.web.app" \
+            --data-binary @push.txt "https://ntfy.sh/$NTFY_TOPIC" >/dev/null || true
