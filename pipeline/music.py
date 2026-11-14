@@ -207,85 +207,6 @@ def _artist_tags_lastfm(artist: str, key: str | None, cache: dict, budget: list[
     return cache[artist]["t"]
 
 
-LASTFM_TRACK_TAGS_PER_RUN = 3000
-# any genre word: a song whose top tags have none ("2024", "seen live", "favorites") says nothing about genre
-GENRE_WORDS = re.compile(r"hip ?hop|\brap\b|trap|drill|grime|rock|metal|punk|grunge|r&b|\brnb\b|soul|funk|\bpop\b|"
-                         r"dance|electro|house|techno|trance|dubstep|\bedm\b|disco|country|americana|bluegrass|folk|"
-                         r"jazz|swing|blues|classical|baroque|orchestral|opera|reggae|dancehall|\bdub\b|\bska\b|"
-                         r"reggaeton|latin|indie|alternative|ambient|synth|wave|trip ?hop|downtempo|lo ?fi|"
-                         r"afrobeats?|amapiano|k ?pop|j ?pop|ballad|singer songwriter|arab|khaleeji|shaabi")
-
-
-def _song_title_for_tags(title: str) -> str:
-    """The bare song name for a Last.fm lookup ("See You Again ft. Charlie Puth Furious 7 Soundtrack" -> "See You Again")."""
-    t = re.split(r"\s+(?:ft\.?|feat\.?|featuring)\s|[\(\[|/]|\s[-\u2013]\s", title, flags=re.I)[0]
-    return t.strip(" -\"'") or title
-
-
-def _track_tags_lastfm(artist: str, title: str, key: str | None, cache: dict, budget: list[int]) -> str | None:
-    """A SONG's top Last.fm tags joined by " | " (cached 60 days); "" if Last.fm has none, None if not checked."""
-    artist = re.sub(r"\s*(\bft\.?|\bfeat\.?|\bfeaturing\b|,| x | & ).*$", "", artist, flags=re.I).strip() or artist
-    title = _song_title_for_tags(title)
-    ck = common.norm(f"{artist} {title}").strip()
-    hit = cache.get(ck)
-    if hit and common.within(common.parse_time(hit["at"]), 60 * 24):
-        return hit["t"]
-    if not key or budget[0] <= 0:
-        return hit["t"] if hit else None
-    budget[0] -= 1
-    time.sleep(0.2)
-    try:
-        data = common.get(LASTFM, params={"method": "track.gettoptags", "artist": artist, "track": title,
-                                          "autocorrect": 1, "api_key": key, "format": "json"})
-    except common.FetchError:
-        return hit["t"] if hit else None
-    raw = ((data or {}).get("toptags") or {}).get("tag") or []
-    if isinstance(raw, dict):
-        raw = [raw]
-    tags = [t.get("name", "").lower().replace("-", " ") for t in raw if int(t.get("count") or 0) > 0][:12]
-    cache[ck] = {"at": common.iso(common.now_utc()), "t": " | ".join(tags)}
-    return cache[ck]["t"]
-
-
-def song_in_genre(gid: str, song: dict, key: str | None, track_tags: dict, artist_tags: dict,
-                  track_budget: list[int], artist_budget: list[int]) -> bool:
-    """Owner, 14 Nov 2026: genre membership is decided by the SONG, not the artist (Uptown Funk isn't rap
-    because Mark Ronson has a hip-hop tag). The genre must be among the song's top 5 Last.fm tags. Only
-    when Last.fm knows no genre for the song do the artist's top 3 tags decide (new songs often have no tags)."""
-    if gid in ("all", "arabic") or gid not in GENRE_CORE:
-        return True
-    need = CORE_TAGS.get(gid) or GENRE_CORE[gid]
-    st = _track_tags_lastfm(song["artist"], song["title"], key, track_tags, track_budget)
-    if st:
-        top5 = " | ".join(st.split(" | ")[:5])
-        if GENRE_WORDS.search(top5):
-            if not re.search(need, top5):
-                return False
-            if gid != "conscious-rap":
-                return True
-            at = _artist_tags_lastfm(song["artist"], key, artist_tags, artist_budget) or ""
-            return bool(re.search(GENRE_CORE[gid], st) or re.search(GENRE_CORE[gid], at))
-    # no genre on the song itself: the artist's top 3 tags decide
-    tags = _artist_tags_lastfm(song["artist"], key, artist_tags, artist_budget)
-    if tags is None:
-        # unknown on Last.fm: YouTube-search finds stay out; database-sourced songs keep the earlier checks' verdict
-        return not str(song.get("mbid") or "").startswith("yt:")
-    if not tags:
-        return False
-    # top 3, not 5: a pop act with "hip hop" as 4th/5th tag (Rihanna, Mark Ronson, LISA) isn't a rap source
-    if not re.search(need, " | ".join(tags.split(" | ")[:3])):
-        return False
-    return gid != "conscious-rap" or bool(re.search(GENRE_CORE[gid], tags))
-
-
-def same_song_key(artist: str, title: str) -> str:
-    """One key per song across uploads: first word of the artist + the title before any feat./brackets/
-    separator ("Nano" and "Nano I \u062a\u0648\u0648\u0644\u064a\u062a ... - \u0646\u0627\u0646\u0648" are one song)."""
-    first = (common.norm(artist).split() or [""])[0]
-    head = re.split(r"[\(\[]| ft\.| feat|\s\|\s?|\s/\s|\s[-\u2013]\s|\sI\s(?=.*[\u0600-\u06FF])", title)[0]
-    return common.norm(first + " " + head).strip()
-
-
 def _deezer_song(t: dict, albums: dict) -> dict:
     album = t.get("album") or {}
     released = albums.get(str(album.get("id")))
@@ -594,8 +515,7 @@ JUNK = re.compile(r"\b(official (music )?video|official audio|official visualize
 
 
 def _youtube_recent(yt: YouTube, gid: str, name: str, after, key: str | None, artist_tags: dict,
-                    tag_budget: list[int], budget: list[int], track_tags: dict | None = None,
-                    track_budget: list[int] | None = None) -> list[dict]:
+                    tag_budget: list[int], budget: list[int]) -> list[dict]:
     """The genre's most-viewed official music videos of the last 12 months, straight from YouTube
     (owner, 2 Nov 2026: Best Recent missed the year's big hits that the music databases hadn't linked).
     Official = an artist channel, VEVO or the auto-generated "Topic" channel; the artist must belong to
@@ -645,10 +565,9 @@ def _youtube_recent(yt: YouTube, gid: str, name: str, after, key: str | None, ar
         an = common.norm(artist).replace(" ", "")   # "KendrickLamarVEVO" vs "Kendrick Lamar"
         if not an or not ch or not (an in ch or ch in an):
             continue
-        # the SONG must be in the genre (owner, 14 Nov 2026); the artist's tags only when the song has none
-        if not song_in_genre(gid, {"artist": artist, "title": song, "mbid": "yt:" + v["id"]}, key,
-                             track_tags if track_tags is not None else {}, artist_tags,
-                             track_budget or [0], tag_budget):
+        tags = _artist_tags_lastfm(artist, key, artist_tags, tag_budget)
+        # the genre must be among the artist's top 5 tags (a stray tag lets Viking or pop acts in)
+        if tags is None or not re.search(FAMILY[gid], " | ".join(tags.split(" | ")[:5])):
             continue
         out.append({"title": song, "artist": artist, "album": None, "released": (v.get("published") or "")[:10] or None,
                     "cover": v.get("thumb"), "artist_youtube": None,
@@ -848,8 +767,8 @@ def _global_top(yt: YouTube | None, gid: str = "all", key: str | None = None, ar
         q = YT_GENRE.get(gid, (None,))[0]
         if not q:
             return []
-        ckey = f"__top_music__|2|{q}"
-        cached = yt.cache["search"].get(ckey)
+        key = f"__top_music__|2|{q}"
+        cached = yt.cache["search"].get(key)
         fresh = cached and common.within(common.parse_time(cached["at"]), 7 * 24)
         if not fresh and GENRE_TOP_PER_RUN[0] <= 0:
             found = cached["items"] if cached else []   # this week's searches are used up: last week's list
@@ -873,6 +792,10 @@ def _global_top(yt: YouTube | None, gid: str = "all", key: str | None = None, ar
         name = BRACKETS.sub("", v["title"]).strip()
         channel = re.sub(r"(?i)vevo$|\s*-\s*topic$|\s*official$", "", (v.get("channel") or "").strip()).strip()
         artist, title = (name.split(" - ", 1) if " - " in name else (channel, name))
+        if gid not in ("all", "arabic"):
+            tags = _artist_tags_lastfm(artist.strip(), key, artist_tags if artist_tags is not None else {}, tag_budget or [0])
+            if not tags or not re.search(GENRE_CORE[gid], " | ".join(tags.split(" | ")[:5])):
+                continue   # the artist isn't known for this genre
         out.append({"mbid": f"yt:{v['id']}", "artist": artist.strip(), "title": title.strip(), "fit": 1.0,
                     "released": (v.get("published") or "")[:10],
                     "yt": {"id": v["id"], "title": v["title"], "channel": v.get("channel"), "published": v.get("published"),
@@ -918,7 +841,6 @@ def build(yt: YouTube | None = None) -> dict:
     # Deezer chart songs: no MusicBrainz id; Deezer's genre is the membership, its rank the pre-sort
     dz_meta: dict[str, dict] = {}
     artist_tags, tag_budget = state.setdefault("lfm_artist_tags", {}), [LASTFM_ARTIST_TAGS_PER_RUN]
-    track_tags, track_budget = state.setdefault("lfm_track_tags", {}), [LASTFM_TRACK_TAGS_PER_RUN]
     for gid, songs in _deezer_candidates(state.setdefault("deezer_albums", {})).items():
         for sid, song in songs.items():
             # Deezer's genre labels are loose: the artist must be in the genre's family on Last.fm too
@@ -936,8 +858,7 @@ def build(yt: YouTube | None = None) -> dict:
         for gid, (gname, _) in GENRES.items():
             if gid == "all":
                 continue
-            for song in _youtube_recent(yt, gid, gname, now - timedelta(days=365), key, artist_tags, tag_budget, rbudget,
-                                        track_tags, track_budget):
+            for song in _youtube_recent(yt, gid, gname, now - timedelta(days=365), key, artist_tags, tag_budget, rbudget):
                 sid = "yt:" + song["video"]["id"]
                 yt_meta[sid] = song
                 pools.setdefault(gid, {})[sid] = 1.0
@@ -1085,27 +1006,41 @@ def build(yt: YouTube | None = None) -> dict:
             out = []
             for x in cands:
                 v = yt_of(x)
-                if v:
+                if v and core_artist(x):
                     out.append({**x, "yt": v})
             return out
 
-        fit_memo: dict = {}
-
-        def in_genre(x) -> bool:
-            k = skey(x)
-            if k not in fit_memo:
-                fit_memo[k] = song_in_genre(gid, x, key, track_tags, artist_tags, track_budget, tag_budget)
-            return fit_memo[k]
+        def core_artist(x) -> bool:
+            """Owner, 2 Nov 2026 (MGMT and Viking music showed up in Rap): for the hip-hop genres the
+            genre must be among the artist's TOP 5 Last.fm tags, not just anywhere in their tags."""
+            # owner, 14 Nov 2026 ("most accurate regardless"): every genre now needs its own name among the
+            # artist's top 5 Last.fm tags (Uptown Funk was in Rap, Pompeii in House, AC/DC in Blues)
+            if gid in ("all", "arabic") or gid not in GENRE_CORE:
+                return True
+            tags = _artist_tags_lastfm(x["artist"], key, artist_tags, tag_budget)
+            if tags is None:
+                # unknown on Last.fm: YouTube-search finds ("Trap king", "Ragal Ironbull") stay out;
+                # database-sourced songs keep the earlier checks' verdict
+                return not str(x.get("mbid") or "").startswith("yt:")
+            if not tags:
+                return False
+            top5 = " | ".join(tags.split(" | ")[:5])
+            if not re.search(CORE_TAGS.get(gid) or GENRE_CORE[gid], top5):
+                return False
+            # Conscious Rap: a hip-hop artist AND known for the conscious / jazz-rap side (any of their tags)
+            return gid != "conscious-rap" or bool(re.search(GENRE_CORE[gid], tags))
 
         def top(rows, score, n=20):
             per: dict[str, int] = {}
             out, songs_seen = [], set()
             for x in sorted(rows, key=score, reverse=True):
-                same = same_song_key(x["artist"], x["title"])
+                # first word of the artist + title: "Bob Marley" and "Bob Marley & The Wailers" are one act
+                first = (common.norm(x["artist"]).split() or [""])[0]
+                same = common.norm(first + " " + re.split(r"[\(\[]| ft\.| feat", x["title"])[0]).strip()
                 if same in songs_seen:   # the same song uploaded twice (Tu Sin Mi) shows once
                     continue
                 songs_seen.add(same)
-                if per.get(x["artist"], 0) < PER_ARTIST and in_genre(x):
+                if per.get(x["artist"], 0) < PER_ARTIST:
                     per[x["artist"]] = per.get(x["artist"], 0) + 1
                     out.append(x)
                 if len(out) >= n:
@@ -1121,7 +1056,7 @@ def build(yt: YouTube | None = None) -> dict:
         pool = {}
         for x in at + rc + tr:
             pool.setdefault(skey(x), x)
-        a_rows = [{**x, "yt": yt_of(x)} for x in pool.values() if yt_of(x)]
+        a_rows = [{**x, "yt": yt_of(x)} for x in pool.values() if yt_of(x) and core_artist(x)]
         # Best of All Time from YouTube alone (owner, 9 Nov 2026): YouTube's most-viewed music videos
         # (for a genre, only those YouTube's own topics put in it), together with the songs found before
         # when YouTube's topics agree on their genre too; ranked by views
