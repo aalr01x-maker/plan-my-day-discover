@@ -31,6 +31,7 @@ from datetime import timedelta
 from urllib.parse import quote_plus
 
 from . import common
+from . import music_catalog
 from .youtube import YouTube, best_match, embed
 
 LB = "https://api.listenbrainz.org/1"
@@ -344,7 +345,10 @@ YOUTUBE_LOOKUPS = 20      # YouTube searches per day (100 of the 10,000 free dai
 NOT_OFFICIAL = re.compile(r"\b(cover|karaoke|reaction|tutorial|lesson|instrumental version|8d|slowed|sped up|nightcore)\b", re.I)
 
 
-SKIP_VERSION = re.compile(r"\b(live|remix|edit|teaser|trailer|behind the scenes|interview|making of|snippet|visualiser|visualizer)\b", re.I)
+# "anniversary" (owner, 14 Nov 2026): Faded matched a 2025 "10th Anniversary" re-upload (1.5M views) instead of the
+# official 2015 video (3B+)
+SKIP_VERSION = re.compile(r"\b(live|remix|edit|teaser|trailer|behind the scenes|interview|making of|snippet|visualiser|visualizer|"
+                          r"anniversary)\b", re.I)
 CHANNELS_PER_RUN = 2000   # artist channels read per day (1-6 quota units each; the ceiling still applies)
 YOUTUBE_CEILING = 9300     # music runs last, so it may use the daily allowance up to here (10,000 total; YouTube sells no extra)
 
@@ -400,12 +404,20 @@ def _guess_channel(yt: YouTube, artist: str, cache: dict) -> str | None:
     return cid
 
 
-def _todo(entry: dict | None, now) -> bool:
-    """Not looked up yet, or found nothing more than 30 days ago (worth another try)."""
+def _late_upload(entry: dict, song: dict) -> bool:
+    """The matched video went up 3+ years after a song released in the YouTube era (2009 on): likely a
+    re-upload or anniversary edition, not the official video (Faded 2015 -> a 2025 upload)."""
+    rel, pub = (song.get("released") or "")[:4], (entry.get("published") or "")[:4]
+    return rel.isdigit() and pub.isdigit() and int(rel) >= 2009 and int(pub) - int(rel) >= 3
+
+
+def _todo(entry: dict | None, now, song: dict | None = None) -> bool:
+    """Not looked up yet, or found nothing more than 30 days ago (worth another try), or matched to a
+    late re-upload that hasn't been re-checked yet (queued: waits for the daily search budget)."""
     if entry is None:
         return True
     if entry.get("id"):
-        return False
+        return bool(song) and not entry.get("rechecked") and _late_upload(entry, song)
     return entry.get("none", "") < (now - timedelta(days=30)).strftime("%Y-%m-%d")
 
 
@@ -485,7 +497,8 @@ def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int
         return "later"
     best_views = max((stats.get(v["id"], 0) for v in candidates), default=0)
     old = (song.get("released") or "0") < (common.now_utc() - timedelta(days=365)).strftime("%Y-%m-%d")
-    if not candidates or (best_views < 1_000_000 and old):
+    best_c = max(candidates, key=lambda v: stats.get(v["id"], 0)) if candidates else None
+    if not candidates or (best_views < 1_000_000 and old) or (best_c and _late_upload(best_c, song)):
         if search_budget[0] > 0 and not yt.exhausted and yt.units < YOUTUBE_CEILING:
             search_budget[0] -= 1
             found = yt.search(f"{song['artist']} {song['title']}", max_age_days=36500)
@@ -506,7 +519,8 @@ def _youtube_video(yt: YouTube, song: dict, state: dict, search_budget: list[int
     if not candidates:
         return None
     best = max(candidates, key=lambda v: stats.get(v["id"], 0))
-    return {"id": best["id"], "title": best["title"], "channel": best.get("channel"), "published": best.get("published")}
+    return {"id": best["id"], "title": best["title"], "channel": best.get("channel"), "published": best.get("published"),
+            "rechecked": True}
 
 
 RECENT_SEARCHES_PER_RUN = 18  # 100 units each; each search is reused for 7 days, so a genre refreshes weekly
@@ -754,6 +768,78 @@ def _wiki_top(yt: YouTube) -> list[dict]:
     return out
 
 
+def _split_artist_title(name: str, channel: str) -> tuple[str, str]:
+    """ "Artist - Title" (hyphen, en or em dash) or "Title - Artist" when the second half is the channel's
+    name ("Numb - Linkin Park" on Linkin Park's channel); else the channel is the artist."""
+    parts = re.split(r"\s[-\u2013\u2014]\s", name, maxsplit=1)
+    if len(parts) < 2:
+        return channel, name
+    a, b = parts[0].strip(), parts[1].strip()
+    ch = common.norm(channel).replace(" ", "")
+    if ch and common.norm(b).replace(" ", "") == ch and common.norm(a).replace(" ", "") != ch:
+        return b, a
+    return a, b
+
+
+MB_DATES_PER_RUN = 400   # MusicBrainz asks for 1 request/s; cached 120 days when found, 30 when not
+
+
+def _mb_first_release(artist: str, title: str, cache: dict, budget: list[int]) -> str | None:
+    """The song's original release date from MusicBrainz: the earliest first-release-date among recordings
+    with the same title by the same artist (owner, 14 Nov 2026: Axel F showed 2000 and Numb 2007; they are
+    2005 and 2003). iTunes and YouTube give reissue and upload dates, so MusicBrainz decides when it knows."""
+    main = re.sub(r"\s*(\bft\.?|\bfeat\.?|\bfeaturing\b|,| x | & ).*$", "", artist, flags=re.I).strip() or artist
+    name = re.split(r"\s+(?:ft\.?|feat\.?|featuring)\s|[\(\[|/]|\s[-\u2013]\s", title, flags=re.I)[0].strip(" -\"'") or title
+    k = common.norm(f"{main} {name}").strip()
+    hit = cache.get(k)
+    if hit and common.within(common.parse_time(hit["at"]), (120 if hit.get("d") else 30) * 24):
+        return hit.get("d")
+    if budget[0] <= 0:
+        return hit.get("d") if hit else None
+    budget[0] -= 1
+    time.sleep(1.1)
+    q = 'recording:"{}" AND artist:"{}"'.format(name.replace('"', ""), main.replace('"', ""))
+    try:
+        data = common.get(MB, params={"query": q, "fmt": "json", "limit": 50}, tries=2)
+    except common.FetchError as exc:
+        common.log(f"music: musicbrainz date {main} - {name}: {exc}")
+        return hit.get("d") if hit else None
+    want_t, want_a = common.norm(name).strip(), common.norm(main).replace(" ", "")
+    dates = []
+    for r in data.get("recordings") or []:
+        # the song itself: exact title (a "(feat. ...)" aside is fine), no disambiguation -- remixes, radio
+        # mixes, bootlegs, karaoke and DJ-mix parts carry one or a bracket and often wrong early dates
+        # (Shape of You "DJ Inko remix" 2015, Axel F "radio mix" 2004)
+        rt = common.norm(re.sub(r"\s*[\(\[](feat|ft)\.?[^\)\]]*[\)\]]", "", r.get("title") or "", flags=re.I)).strip(" .")
+        credit = common.norm("".join((c.get("name") or "") + (c.get("joinphrase") or "") for c in r.get("artist-credit") or [])).replace(" ", "")
+        if rt == want_t and not r.get("disambiguation") and want_a and (credit.startswith(want_a) or want_a.startswith(credit or "~")) \
+                and r.get("first-release-date"):
+            dates.append(r["first-release-date"])
+    d = None
+    if dates:
+        # the earliest year at least two recordings agree on (one stray mis-dated entry can't decide)
+        years = sorted({x[:4] for x in dates})
+        year = next((y for y in years if sum(x[:4] == y for x in dates) >= 2), years[0])
+        full = sorted(x for x in dates if x[:4] == year and len(x) == 10)
+        d = full[0] if full else min(x for x in dates if x[:4] == year)
+    cache[k] = {"at": common.iso(common.now_utc()), "d": d}
+    return d
+
+
+def original_date(mb: str | None, source: str | None, itunes: str | None, video: str | None) -> str | None:
+    """MusicBrainz's first release when known (never later than the official video); otherwise the
+    earliest of the other sources."""
+    v = video if video and len(video) == 10 else None
+    if mb:
+        if len(mb) == 4:   # year only: a full date from another source in that year is more precise
+            same = sorted(x for x in (source, itunes, v) if x and len(x) == 10 and x[:4] == mb)
+            mb = same[0] if same else mb
+        if v and (v[:4] < mb[:4] or (len(mb) == 10 and v < mb)):
+            return v
+        return mb
+    return _earliest(source, itunes, v)
+
+
 def _global_top(yt: YouTube | None, gid: str = "all", key: str | None = None, artist_tags: dict | None = None,
                 tag_budget: list[int] | None = None) -> list[dict]:
     """YouTube's most-viewed music videos of all time (for a genre: its search, kept only when YouTube's
@@ -791,7 +877,7 @@ def _global_top(yt: YouTube | None, gid: str = "all", key: str | None = None, ar
             continue
         name = BRACKETS.sub("", v["title"]).strip()
         channel = re.sub(r"(?i)vevo$|\s*-\s*topic$|\s*official$", "", (v.get("channel") or "").strip()).strip()
-        artist, title = (name.split(" - ", 1) if " - " in name else (channel, name))
+        artist, title = _split_artist_title(name, channel)
         if gid not in ("all", "arabic"):
             tags = _artist_tags_lastfm(artist.strip(), key, artist_tags if artist_tags is not None else {}, tag_budget or [0])
             if not tags or not re.search(GENRE_CORE[gid], " | ".join(tags.split(" | ")[:5])):
@@ -800,6 +886,67 @@ def _global_top(yt: YouTube | None, gid: str = "all", key: str | None = None, ar
                     "released": (v.get("published") or "")[:10],
                     "yt": {"id": v["id"], "title": v["title"], "channel": v.get("channel"), "published": v.get("published"),
                            "views": stats[v["id"]]}})
+    return out
+
+
+def core_artist(gid: str, x: dict, key: str | None, artist_tags: dict, tag_budget: list[int]) -> bool:
+    """Owner, 2 + 14 Nov 2026: the genre must be among the artist's TOP 5 Last.fm tags (MGMT/Viking music
+    were in Rap, Uptown Funk in Rap, Pompeii in House, AC/DC in Blues)."""
+    if gid in ("all", "arabic") or gid not in GENRE_CORE:
+        return True
+    tags = _artist_tags_lastfm(x["artist"], key, artist_tags, tag_budget)
+    if tags is None:
+        # unknown on Last.fm: YouTube-search finds stay out; database-sourced songs keep the earlier checks' verdict
+        return not str(x.get("mbid") or "").startswith("yt:")
+    if not tags:
+        return False
+    if not re.search(CORE_TAGS.get(gid) or GENRE_CORE[gid], " | ".join(tags.split(" | ")[:5])):
+        return False
+    # Conscious Rap: a hip-hop artist AND known for the conscious / jazz-rap side (any of their tags)
+    return gid != "conscious-rap" or bool(re.search(GENRE_CORE[gid], tags))
+
+
+def _incorrect_upload(e: dict) -> str | None:
+    """Why a catalogue entry's video isn't the song's official upload, or None. A word that is in the
+    song's own title doesn't count against it ("Live Forever", "24 Hours")."""
+    t, song = e["video"].get("title") or "", e.get("title") or ""
+    if KIDS.search(f"{e['video'].get('channel')} {t}") and not KIDS.search(song):
+        return "incorrect upload: a kids' channel or video"
+    for rx, why in ((NOT_OFFICIAL, "a cover, karaoke, reaction or edited version"),
+                    (COMPILATION, "a compilation, mix or talent-show clip, not a song"),
+                    (SKIP_VERSION, "a live, remix, teaser or anniversary version, not the original")):
+        if rx.search(t) and not rx.search(song):
+            return f"incorrect upload: {why}"
+    return None
+
+
+LAST_MUSIC = common.STATE / "last" / "music.json"
+
+
+def _seed_catalog(cat: dict, today: str) -> None:
+    """First run of the catalogue: the songs on the lists published last time (verified then)."""
+    data = common.load_json(LAST_MUSIC, {})
+    for gid, g in (data.get("genres") or {}).items():
+        for lk in ("all_time", "trending", "recent"):
+            for c in g.get(lk) or []:
+                v = c.get("video") or {}
+                if not v.get("youtube_id") or not (c.get("metrics") or {}).get("views"):
+                    continue
+                row = {"mbid": c.get("id"), "artist": c["artist"], "title": c["title"], "album": c.get("album"),
+                       "cover": c.get("artwork"), "fit": (c.get("metrics") or {}).get("genre_fit") or 1.0, "released": c.get("released"),
+                       "yt": {"id": v["youtube_id"], "title": v.get("title"), "channel": v.get("channel"),
+                              "published": v.get("published"), "views": c["metrics"]["views"]}}
+                music_catalog.upsert(cat, row, gid, "lists published before the catalogue", today)
+    common.log(f"music catalogue: seeded {len(cat)} songs from the last published lists")
+
+
+def _lists_from_last() -> dict:
+    """Yesterday's lists in the change report's shape, from the last published file."""
+    out: dict = {}
+    for gid, g in (common.load_json(LAST_MUSIC, {}).get("genres") or {}).items():
+        for lk in ("all_time", "trending", "recent"):
+            out.setdefault(gid, {})[lk] = [{"vid": (c.get("video") or {}).get("youtube_id"), "title": c["title"],
+                                            "artist": c["artist"], "rank": c["rank"]} for c in g.get(lk) or []]
     return out
 
 
@@ -967,20 +1114,20 @@ def build(yt: YouTube | None = None) -> dict:
                   for (_, _, _, at, rc, tr) in prepared.values()]
         for i in range(max((len(q) for q in queues), default=0)):
             for q in queues:
-                if i < len(q) and _todo(state["yt"].get(skey(q[i])), now):
+                if i < len(q) and _todo(state["yt"].get(skey(q[i])), now, q[i]):
                     found = _youtube_video(yt, q[i], state, search_budget, channel_budget)
                     if found != "later":   # "later": needs a search, and today's searches are used up
                         lookups[0] += 1
                         state["yt"][skey(q[i])] = found or {"none": today}
 
     # 3. Today's view counts for every known video (1 quota unit per 50 videos)
-    ids = sorted({v["id"] for v in state["yt"].values() if v.get("id")})
+    cat = state.setdefault("catalog", {})
+    ids = sorted({v["id"] for v in state["yt"].values() if v.get("id")} | set(cat))
     views = _youtube_views(yt, ids) if yt and yt.available else {}
     for vid, n in views.items():
         h = state["yt_views"].setdefault(vid, {})
         h[today] = n
     cut = (now - timedelta(days=10)).strftime("%Y-%m-%d")
-    state["yt_views"] = {v: {d: n for d, n in h.items() if d >= cut} for v, h in state["yt_views"].items() if v in ids}
 
     def yt_of(x):
         v = state["yt"].get(skey(x)) or {}
@@ -989,172 +1136,185 @@ def build(yt: YouTube | None = None) -> dict:
         n = views.get(v["id"]) or max((state["yt_views"].get(v["id"]) or {"": 0}).values())
         return {**v, "views": n} if n else None
 
-    def growth(vid):
-        h = state["yt_views"].get(vid) or {}
-        days = sorted(d for d in h if d >= (now - timedelta(days=7)).strftime("%Y-%m-%d"))
-        if len(days) < 2:
-            return None
-        span = (common.parse_time(days[-1]) - common.parse_time(days[0])).days or 1
-        return (h[days[-1]] - h[days[0]]) * 7 / span, span   # views per 7 days
+    pending = sum(1 for (_, _, _, at, rc, tr) in prepared.values() for x in at + rc + tr if _todo(state["yt"].get(skey(x)), now, x))
 
-    pending = sum(1 for (_, _, _, at, rc, tr) in prepared.values() for x in at + rc + tr if _todo(state["yt"].get(skey(x)), now))
-
-    # 4. Rank by YouTube views
-    genres = {}
+    # 4. Discovery -> catalogue (owner, 14 Nov 2026). Today's verified songs per genre are ADDED to the
+    #    persistent catalogue; nothing found earlier is dropped because today's fetches came up short.
+    today_views = dict(views)
+    removed: dict[tuple, str] = {}   # (genre, video id) -> documented reason it left
+    why_new: dict[tuple, str] = {}   # (genre, video id) -> why it is new in that genre
+    if not cat:
+        _seed_catalog(cat, today)
     for gid, (name, tags, songs, at, rc, tr) in prepared.items():
         def with_yt(cands):
-            out = []
-            for x in cands:
-                v = yt_of(x)
-                if v and core_artist(x):
-                    out.append({**x, "yt": v})
-            return out
+            return [{**x, "yt": yt_of(x)} for x in cands if yt_of(x) and core_artist(gid, x, key, artist_tags, tag_budget)]
 
-        def core_artist(x) -> bool:
-            """Owner, 2 Nov 2026 (MGMT and Viking music showed up in Rap): for the hip-hop genres the
-            genre must be among the artist's TOP 5 Last.fm tags, not just anywhere in their tags."""
-            # owner, 14 Nov 2026 ("most accurate regardless"): every genre now needs its own name among the
-            # artist's top 5 Last.fm tags (Uptown Funk was in Rap, Pompeii in House, AC/DC in Blues)
-            if gid in ("all", "arabic") or gid not in GENRE_CORE:
-                return True
-            tags = _artist_tags_lastfm(x["artist"], key, artist_tags, tag_budget)
-            if tags is None:
-                # unknown on Last.fm: YouTube-search finds ("Trap king", "Ragal Ironbull") stay out;
-                # database-sourced songs keep the earlier checks' verdict
-                return not str(x.get("mbid") or "").startswith("yt:")
-            if not tags:
-                return False
-            top5 = " | ".join(tags.split(" | ")[:5])
-            if not re.search(CORE_TAGS.get(gid) or GENRE_CORE[gid], top5):
-                return False
-            # Conscious Rap: a hip-hop artist AND known for the conscious / jazz-rap side (any of their tags)
-            return gid != "conscious-rap" or bool(re.search(GENRE_CORE[gid], tags))
-
-        def top(rows, score, n=20):
-            per: dict[str, int] = {}
-            out, songs_seen = [], set()
-            for x in sorted(rows, key=score, reverse=True):
-                # first word of the artist + title: "Bob Marley" and "Bob Marley & The Wailers" are one act
-                first = (common.norm(x["artist"]).split() or [""])[0]
-                same = common.norm(first + " " + re.split(r"[\(\[]| ft\.| feat", x["title"])[0]).strip()
-                if same in songs_seen:   # the same song uploaded twice (Tu Sin Mi) shows once
-                    continue
-                songs_seen.add(same)
-                if per.get(x["artist"], 0) < PER_ARTIST:
-                    per[x["artist"]] = per.get(x["artist"], 0) + 1
-                    out.append(x)
-                if len(out) >= n:
-                    break
-            return out
-
-        # Best Recent: the release date alone isn't enough -- MusicBrainz/Deezer often date a live album,
-        # reissue or compilation ("Mercy" via "Ye Live in Mexico" 2026), while the YouTube video and its
-        # views are the 2012 original. A recent song's official video must also be under ~13 months old.
-        # Owner, 9 Nov 2026: All Time missed songs with more views than the ones listed ("Wake Me Up" 2.5B,
-        # "Shallow" 1.9B were only in the recent/trending candidates). All Time now ranks every song we
-        # know in the genre -- the all-time, recent and trending candidates together -- by YouTube views.
         pool = {}
         for x in at + rc + tr:
             pool.setdefault(skey(x), x)
-        a_rows = [{**x, "yt": yt_of(x)} for x in pool.values() if yt_of(x) and core_artist(x)]
-        # Best of All Time from YouTube alone (owner, 9 Nov 2026): YouTube's most-viewed music videos
-        # (for a genre, only those YouTube's own topics put in it), together with the songs found before
-        # when YouTube's topics agree on their genre too; ranked by views
-        if gid != "all" and yt and yt.available:
+        a_rows = with_yt(pool.values())
+        if gid != "all" and yt and yt.available and not yt.exhausted:
             tp = _topics(yt, [x["yt"]["id"] for x in a_rows])
-            # songs the music databases put in the genre keep their place unless YouTube's labels clearly
-            # name other genres (no labels = keep: the database membership is the evidence)
+            # songs the music databases put in the genre stay unless YouTube's labels clearly name other genres
             a_rows = [x for x in a_rows if not tp.get(x["yt"]["id"]) or _genre_fits(gid, tp[x["yt"]["id"]], x["yt"])]
-        # YouTube-only finds were checked strictly in _global_top (YouTube labels AND the artist's tags)
-        a_rows += _global_top(yt, gid, key, artist_tags, tag_budget)
-        seen_vid: set = set()   # one entry per YouTube video, even if two candidates point to it
-        a_rows = [x for x in a_rows if not (x["yt"]["id"] in seen_vid or seen_vid.add(x["yt"]["id"]))]
-        r_rows = [x for x in with_yt(rc) if _posted_since(x["yt"], video_cut)]
-        max_a = max((x["yt"]["views"] for x in a_rows), default=1)
-        max_r = max((x["yt"]["views"] for x in r_rows), default=1)
-        # ranked by YouTube alone; genre tags only decide membership
+        g_rows = _global_top(yt, gid, key, artist_tags, tag_budget)
+        for rows, via in ((a_rows, "music databases + official YouTube video"), (g_rows, "YouTube's most-viewed music videos"),
+                          (with_yt(rc), "new releases"), (with_yt(tr), "this week's charts")):
+            for x in rows:
+                if not x.get("yt") or not x["yt"].get("id"):
+                    continue
+                if x["yt"].get("views"):
+                    today_views.setdefault(x["yt"]["id"], x["yt"]["views"])
+                new, new_g = music_catalog.upsert(cat, x, gid, via, today)
+                if new_g:
+                    why_new[(gid, x["yt"]["id"])] = f"newly found today ({via})" if new else f"newly verified for this genre ({via})"
+
+    # 5. Re-check the catalogue: today's views (last known kept when YouTube can't answer) and the
+    #    documented reasons a song may leave.
+    for vid, n in today_views.items():
+        state["yt_views"].setdefault(vid, {})[today] = n
+    got_views = bool(views)
+    for vid, e in list(cat.items()):
+        if vid in today_views:
+            e["views"], e["views_at"] = today_views[vid], today
+            e.pop("missing", None)
+        elif got_views and vid in ids:
+            e["missing"] = e.get("missing", 0) + 1   # YouTube answered but not for this video
+        bad = _incorrect_upload(e)
+        if not bad and e.get("missing", 0) >= 3:
+            bad = "video no longer on YouTube (missing 3 runs in a row)"
+        if bad:
+            for g in list(e["genres"]) + ["all"]:
+                removed[(g, vid)] = bad
+            del cat[vid]
+            continue
+        for g in list(e["genres"]):
+            if g in ("all", "arabic") or g not in GENRE_CORE:
+                continue
+            t = _artist_tags_lastfm(e["artist"], key, artist_tags, tag_budget)
+            if t and not re.search(CORE_TAGS.get(g) or GENRE_CORE[g], " | ".join(t.split(" | ")[:5])):
+                removed[(g, vid)] = f"ineligible genre: {e['artist']}'s top 5 Last.fm tags don't include {GENRES[g][0]}"
+                del e["genres"][g]
+        if not e["genres"]:
+            removed[("all", vid)] = removed.get(("all", vid)) or "no genre left"
+            del cat[vid]
+
+    # 6. Rank: every eligible song in the catalogue, sorted by the list's own number, top N shown.
+    mb_cache, mb_budget = state.setdefault("mb_dates", {}), [MB_DATES_PER_RUN]
+    week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    def release_of(vid: str, e: dict) -> str | None:
+        apple = _itunes(music_catalog.as_row(vid, e), state["itunes"], itunes_budget)
+        mb = _mb_first_release(e["artist"], e["title"], mb_cache, mb_budget)
+        e["released"] = original_date(mb, e.get("released_src"), (apple or {}).get("released"),
+                                      (e["video"].get("published") or "")[:10] or None)
+        e["date_source"] = "MusicBrainz" if mb else "earliest of Apple, the music databases and the video"
+        return e["released"]
+
+    def is_new(d: str | None) -> bool:
+        return bool(d) and (d >= year_ago if len(d) == 10 else d[:4] > year_ago[:4])
+
+    def card(vid: str, e: dict, rank: int, why: str) -> dict:
+        x = music_catalog.as_row(vid, e)
+        apple = _itunes(x, state["itunes"], itunes_budget)
+        v = x["yt"]
+        return {
+            "id": x["mbid"], "rank": rank, "title": x["title"], "artist": x["artist"], "album": x.get("album"),
+            "released": release_of(vid, e),
+            "artwork": (apple or {}).get("artwork") or x.get("cover"),
+            "preview": (apple or {}).get("preview"),
+            "metrics": {"views": v["views"], "source": "YouTube", "channel": v.get("channel"), "genre_fit": round(x["fit"], 2),
+                        "views_at": e.get("views_at")},
+            "why": why, "video": embed({**v, "published": v.get("published")}),
+            "links": [{"name": "YouTube", "url": f"https://www.youtube.com/watch?v={vid}"}] + _links(x, apple),
+        }
+
+    prev_lists = state.get("last_lists") or _lists_from_last()
+    genres, changes, violations, last_lists = {}, {}, [], {}
+    entries = list(cat.items())
+    gains = {vid: music_catalog.weekly_gain(state["yt_views"].get(vid) or {}, today, week_ago) for vid, _ in entries}
+    for gid, (name, tags) in GENRES.items():
         n = list_size(gid)
-        all_time = top(a_rows, lambda x: x["yt"]["views"], n)
-        recent = top(r_rows, lambda x: x["yt"]["views"], 2 * n)   # trimmed to n after the Apple date check below
+        elig = entries if gid == "all" else [(v, e) for v, e in entries if gid in e["genres"]]
+        reasons: dict[str, dict] = {"all_time": {}, "trending": {}, "recent": {}}
 
-        # Trending: views gained per week (between our daily counts), else views per week since the
-        # video went up when it is under 2 years old
-        def momentum(x):
-            g = growth(x["yt"]["id"])
-            if g and g[0] > 0:
-                return g[0], f"+{g[0]:,.0f} YouTube views per week (measured over {g[1]} day{'s' if g[1] != 1 else ''})"
-            # owner, 2 Nov 2026: only this week's MEASURED gain counts (no views-per-week-since-posting backup)
-            return None
+        def views_of(e):
+            return e.get("views") or 0
 
-        t_rows = []
-        for x in with_yt({id(y): y for y in tr + at + rc}.values()):
-            m = momentum(x)
-            if m:
-                t_rows.append({**x, "mom": m})
-        max_m = max((x["mom"][0] for x in t_rows), default=1)
-        max_t = max((x["yt"]["views"] for x in t_rows), default=1)
-        trending = top(t_rows, lambda x: x["mom"][0], n)
-        t_rows_sorted = top(t_rows, lambda x: x["mom"][0], 3 * n)   # extra, before the 12-month check   # views gained per week only (owner, 2 Nov 2026)
-
-        def card(x: dict, rank: int, why: str) -> dict:
-            apple = _itunes(x, state["itunes"], itunes_budget)
-            v = x["yt"]
-            return {
-                "id": x["mbid"], "rank": rank, "title": x["title"], "artist": x["artist"], "album": x.get("album"),
-                # the official video's upload date counts too: a song can't be newer than its video
-                # (G.O.M.D, Tití Me Preguntó showed a 2026 reissue's date)
-                "released": _earliest(x.get("released"), (apple or {}).get("released"), (v.get("published") or "")[:10] or None),
-                "artwork": (apple or {}).get("artwork") or x.get("cover"),
-                "preview": (apple or {}).get("preview"),
-                "metrics": {"views": v["views"], "source": "YouTube", "channel": v.get("channel"), "genre_fit": round(x["fit"], 2)},
-                "why": why, "video": embed({**v, "published": v.get("published")}),
-                "links": [{"name": "YouTube", "url": f"https://www.youtube.com/watch?v={v['id']}"}] + _links(x, apple),
-            }
+        # Most Viewed Ever: lifetime views
+        at_shown, at_skip, at_order = music_catalog.rank(elig, views_of, n, PER_ARTIST)
+        # Most Viewed New Releases: released in the last 12 months (original date), total views
+        nr = []
+        for v, e in elig:
+            if not _posted_since(e["video"], video_cut):
+                reasons["trending"][v] = "not a new release (official video over 13 months old)"
+            elif not is_new(release_of(v, e)):
+                reasons["trending"][v] = f"not a new release (originally released {e['released']})"
+            else:
+                nr.append((v, e))
+        floor = max(50_000, 0.02 * max((views_of(e) for _, e in nr), default=0))
+        for v, e in nr:
+            if views_of(e) < floor:
+                reasons["trending"][v] = f"under the new-release minimum of {floor:,.0f} views"
+        nr = [(v, e) for v, e in nr if views_of(e) >= floor]
+        nr_shown, nr_skip, nr_order = music_catalog.rank(nr, views_of, n, PER_ARTIST)
+        # Trending This Week: views gained per week from valid dated snapshots
+        wk = []
+        for v, e in elig:
+            if gains.get(v):
+                wk.append((v, {**e, "_gain": gains[v][0]}))
+            else:
+                reasons["recent"][v] = "no valid weekly measurement (needs rising daily counts at least a day apart in the last 7 days)"
+        wk_shown, wk_skip, wk_order = music_catalog.rank(wk, lambda e: e["_gain"], n, PER_ARTIST)
 
         lists = {
-            "all_time": [card(x, i + 1, f"{x['yt']['views']:,} views on YouTube ({x['yt'].get('channel')}).")
-                         for i, x in enumerate(all_time)],
-            # owner, 2 Nov 2026: no padding with tiny songs -- a recent song needs at least 2% of the genre's
-            # top recent song's views (and 50K), so a short list beats a wrong one
-            # owner, 2 Nov 2026: the two rankings swapped -- Best Recent = views gained per week,
-            # Trending = released in the last 12 months by total views (with the minimum-views rule)
-            "trending": _renumber([c for c in (card(x, 0, "") for x in recent) if (c["released"] or "") >= year_ago
-                                   and c["metrics"]["views"] >= max(50_000, 0.02 * max((y["yt"]["views"] for y in recent), default=0))][:n]),
-            # Best Recent = views gained this week, any release year (owner, 2 Nov 2026)
-            "recent": [card(x, i + 1, f"{x['mom'][1]}; {x['yt']['views']:,} views in total.") for i, x in enumerate(trending)],
+            "all_time": [card(v, e, i + 1, f"{views_of(e):,} views on YouTube ({e['video'].get('channel')}).")
+                         for i, (v, e) in enumerate(at_shown)],
+            "trending": [card(v, e, i + 1, f"Released {e.get('released')}; {views_of(e):,} views on YouTube.")
+                         for i, (v, e) in enumerate(nr_shown)],
+            "recent": [card(v, cat[v], i + 1, f"+{gains[v][0]:,.0f} YouTube views per week (measured over {gains[v][1]} "
+                            f"day{'s' if gains[v][1] != 1 else ''}); {views_of(e):,} views in total.")
+                       for i, (v, e) in enumerate(wk_shown)],
         }
+        for lk, (shown, skip, order, score) in {"all_time": (at_shown, at_skip, at_order, views_of),
+                                                 "trending": (nr_shown, nr_skip, nr_order, views_of),
+                                                 "recent": (wk_shown, wk_skip, wk_order, lambda e: e["_gain"])}.items():
+            violations += [f"{gid}/{lk}: {x}" for x in music_catalog.verify(shown, skip, order, score)]
+            reasons[lk].update(skip)
+            full_rank = {v: i + 1 for i, (v, _) in enumerate(order)}
+            for (g, v), r in removed.items():
+                if g == gid or gid == "all":
+                    reasons[lk].setdefault(v, r)
+            new_rows = [{"vid": v, "title": e["title"], "artist": e["artist"], "rank": i + 1} for i, (v, e) in enumerate(shown)]
+            wn = {v: r for (g, v), r in why_new.items() if g == gid or gid == "all"}
+            ch = music_catalog.diff((prev_lists.get(gid) or {}).get(lk) or [], new_rows, full_rank, reasons[lk], wn, n)
+            if ch:
+                changes.setdefault(gid, {})[lk] = ch
+            last_lists.setdefault(gid, {})[lk] = new_rows
         notes = {}
-        for k, lst in lists.items():
-            if len(lst) < n and pending:
-                notes[k] = (f"{len(lst)} songs verified on YouTube so far; more are looked up every day "
-                            f"(YouTube's free limit allows about {YOUTUBE_LOOKUPS} a day), so this list grows over the first days.")
-        if len(lists["trending"]) < n and not notes.get("trending"):
-            notes["trending"] = f"{len(lists['recent'])} songs in this genre from the last 12 months have an official YouTube video."
+        for lk, lst in lists.items():
+            if len(lst) < n:
+                notes[lk] = (f"{len(lst)} songs in the catalogue qualify so far. The catalogue keeps every verified song and "
+                             f"grows daily (YouTube's free limit allows about {YOUTUBE_LOOKUPS} new searches a day).")
         genres[gid] = {"name": name, "tags": tags, **lists, "notes": notes}
-        common.progress("music", len(genres), len(prepared), gid)
-        common.log(f"music {gid}: {len(songs)} songs; {len(lists['all_time'])}/{len(lists['recent'])}/{len(lists['trending'])}")
+        common.progress("music", len(genres), len(GENRES), gid)
+        common.log(f"music {gid}: {len(elig)} in catalogue; {len(lists['all_time'])}/{len(lists['trending'])}/{len(lists['recent'])}")
 
-    # "All" = the top of everything (owner, 9 Nov 2026): every genre's All Time songs and YouTube's global
-    # top together, ranked by views, at most 2 per artist (In Da Club 2.8B was in Rap but not in All)
-    if "all" in genres:
-        merged, seen_v = [], set()
-        for g in genres.values():
-            for c in g["all_time"]:
-                vid = (c.get("links") or [{}])[0].get("url")
-                if vid in seen_v or KIDS.search(f"{c['artist']} {c['title']}"):
-                    continue
-                seen_v.add(vid)
-                merged.append(c)
-        merged.sort(key=lambda c: c["metrics"]["views"], reverse=True)
-        per, top_all = {}, []
-        for c in merged:
-            a_key = common.norm(c["artist"])
-            if per.get(a_key, 0) < PER_ARTIST:
-                per[a_key] = per.get(a_key, 0) + 1
-                top_all.append({**c, "rank": len(top_all) + 1})
-            if len(top_all) >= list_size("all"):
-                break
-        genres["all"]["all_time"] = top_all
+    n_changes = sum(len(c) for g in changes.values() for c in g.values())
+    common.log(f"music catalogue: {len(cat)} songs; {n_changes} list changes; {len(violations)} ranking violations")
+    for x in violations[:20]:
+        common.log(f"music VERIFY: {x}")
+    state["last_lists"] = last_lists
+    log = [x for x in state.get("music_changelog") or [] if x.get("date") != today][-13:]
+    state["music_changelog"] = log + [{"date": today, "changes": changes}]
+    per_genre = {g: sum(1 for e in cat.values() if g in e["genres"]) for g in GENRES if g != "all"}
+    coverage = {"catalogue_songs": len(cat), "per_genre": per_genre,
+                "dates_from_musicbrainz": sum(1 for e in cat.values() if e.get("date_source") == "MusicBrainz"),
+                "views_fresh_today": sum(1 for e in cat.values() if e.get("views_at") == today),
+                "youtube_lookups_pending": pending, "youtube_quota_ran_out": bool(yt and yt.exhausted),
+                "youtube_units_used": yt.units if yt else 0}
+    state["yt_views"] = {v: {d: c for d, c in h.items() if d >= cut} for v, h in state["yt_views"].items()
+                         if v in ids or v in cat}
 
     common.log(f"music: {lookups[0]} songs looked up ({YOUTUBE_LOOKUPS - search_budget[0]} by search), "
                f"{len(ids)} videos tracked, {pending} songs still to look up")
@@ -1165,5 +1325,7 @@ def build(yt: YouTube | None = None) -> dict:
         state["itunes"] = dict(list(state["itunes"].items())[-6000:])
     state.pop("history", None)
     common.save_json(STATE, state)
-    return {"genres": genres, "sources": ["YouTube (views, the only ranking)", "Last.fm, Deezer charts, MusicBrainz, ListenBrainz (genre membership)",
+    return {"genres": genres, "changes": changes, "coverage": coverage,
+            "verification": {"lists_checked": 3 * len(genres), "violations": violations},
+            "sources": ["YouTube (views, the only ranking)", "Last.fm, Deezer charts, MusicBrainz, ListenBrainz (genre membership)",
                                           "iTunes (artwork, previews)"]}

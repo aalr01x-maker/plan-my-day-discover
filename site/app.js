@@ -10,6 +10,9 @@ const SECTIONS = [
   { id: "sports", icon: "🏆", name: "Sports", file: "sports" },
 ];
 const RANKINGS = [["all_time", "Best of All Time"], ["recent", "Best Recent"], ["trending", "Trending"]];
+// Music (owner, 14 Nov 2026): labels say exactly what each list calculates. Data keys stay: "trending" holds
+// new releases by total views, "recent" holds the weekly view gain.
+const MUSIC_RANKINGS = [["all_time", "Most Viewed Ever"], ["trending", "Most Viewed New Releases"], ["recent", "Trending This Week"]];
 // Owner, 4 Nov 2026: Top 12 on every News tab.
 const NEWS_PERIODS = [["today", "Top 12 Daily"], ["week", "Top 12 Weekly"], ["month", "Top 12 Monthly"]];
 // Topic tabs on the first row (no label), then World and the regions on the second (owner, 3 Nov 2026).
@@ -162,7 +165,7 @@ const ABOUT = {
   news: "Stories are grouped across BBC, Reuters, AP, Al Jazeera, DW, France 24 and CNBC, then ranked by how many independent outlets confirm them (35%), significance (30%), recency (20%) and source reliability (15%). Duplicates are merged into one story.",
   movies: "Everything comes from IMDb: which titles exist, their genres, ratings and votes. Every list shows only titles rated 7.5+ out of 10, and ratings are weighted by number of votes, so a title with a few votes can't top the list.",
   gaming: "Ranked only with Steam data. Best of All Time: one third review score, one third players right now, one third number of reviews. Best Recent (last 5 years): one third review score, one third number of reviews, one third players right now. Trending: 50% players right now + 50% review score. Review scores are weighted so a game with few reviews can't top the list, and counts are scaled so the biggest games don't win on size alone. Games not sold on Steam (Nintendo and PlayStation exclusives) aren't listed.",
-  music: "Ranked only by YouTube: views of each song's official upload (artist channel, VEVO or Topic). Last.fm, Deezer charts and MusicBrainz only decide which genre a song belongs to, never its rank.",
+  music: "Ranked only by YouTube: views of each song's official upload (artist channel, VEVO or Topic). Last.fm, Deezer charts and MusicBrainz only decide which genre a song belongs to, never its rank. Every verified song stays in a catalogue, and each list sorts the whole catalogue: a song leaves only for a stated reason (duplicate upload, wrong upload, wrong genre or release date, or dropping below the top of the list).",
   sports: "Highlights are official league-channel videos ranked by views. Results and events are ranked by importance (results, titles, records, major incidents), how many outlets report them, and recency.",
 };
 /* Where each section's facts come from, shown in a banner under its title */
@@ -482,15 +485,15 @@ async function music(parts) {
   const data = await load("music");
   const tabs = Object.entries(data.genres).map(([id, g]) => [id, g.name]);
   const genre = data.genres[parts[1]] ? parts[1] : tabs[0]?.[0];
-  const ranking = RANKINGS.some(([r]) => r === parts[2]) ? parts[2] : "all_time";
+  const ranking = MUSIC_RANKINGS.some(([r]) => r === parts[2]) ? parts[2] : "all_time";
   tabsRow($("tabs"), tabs, genre, (id) => go(["music", id, ranking], null));
-  segGroups([{ label: "Ranking", items: RANKINGS, selected: ranking, onPick: (id) => go(["music", genre, id], null) }]);
+  segGroups([{ label: "Ranking", items: MUSIC_RANKINGS, selected: ranking, onPick: (id) => go(["music", genre, id], null) }]);
   $("filters").innerHTML = "";
   const g = data.genres[genre];
-  heading("music", [g?.name, label(RANKINGS, ranking)]);
-  note(`${g?.name || ""}: ` + ({ all_time: "Best of All Time: total YouTube views of the official video.",
-    recent: "Best Recent: ranked only by YouTube views gained per week (this week's measured gain).",
-    trending: "Trending: released in the last 12 months; total YouTube views." }[ranking]) +
+  heading("music", [g?.name, label(MUSIC_RANKINGS, ranking)]);
+  note(`${g?.name || ""}: ` + ({ all_time: "Most Viewed Ever: lifetime YouTube views of the official video.",
+    trending: "Most Viewed New Releases: songs first released in the last 12 months, ranked by total YouTube views.",
+    recent: "Trending This Week: YouTube views gained per week, measured between our dated daily counts." }[ranking]) +
     (g?.notes?.[ranking] ? " " + g.notes[ranking] : ""));
   paint(g?.[ranking] || [], songCard, songDetail, "No songs here yet.");
   return ["music", genre, ranking];
@@ -844,7 +847,7 @@ async function search(parts, q) {
   if (n.value) for (const [rid, r] of Object.entries(n.value.regions)) for (const p of ["today", "week", "month"]) for (const s of r[p] || []) if (hit(s)) add(`🌍 ${r.name}`, ["news", rid, p], s.id, s.headline);
   if (m.value) for (const [media, set] of [["movie", m.value.movies], ["tv", m.value.tv]]) for (const [gid, gg] of Object.entries(set)) for (const [rk] of RANKINGS) for (const x of gg[rk]) if (hit(x.title)) add(`🎬 ${gg.name}`, ["movies", media, gid, rk], x.id, x.title);
   if (g.value) for (const [gid, gg] of Object.entries(g.value.genres)) for (const [rk] of RANKINGS) for (const x of gg[rk].slice(0, 30)) if (hit(x.title)) add(`🎮 ${gg.name}`, ["gaming", gid, rk], x.id, x.title);
-  if (mu.value) for (const [gid, gg] of Object.entries(mu.value.genres)) for (const [rk] of RANKINGS) for (const x of gg[rk]) if (hit(x.title + " " + x.artist)) add(`🎵 ${gg.name}`, ["music", gid, rk], x.id, `${x.artist} – ${x.title}`);
+  if (mu.value) for (const [gid, gg] of Object.entries(mu.value.genres)) for (const [rk] of MUSIC_RANKINGS) for (const x of gg[rk]) if (hit(x.title + " " + x.artist)) add(`🎵 ${gg.name}`, ["music", gid, rk], x.id, `${x.artist} – ${x.title}`);
   if (sp.value) for (const [sid, s] of Object.entries(sp.value.sports)) for (const v of ["results", "latest"]) for (const x of s[v]) if (hit(x.title)) add(`🏆 ${s.name}`, ["sports", sid, v], x.id, x.title);
   const seen = new Set();
   const rows = out.filter((r) => !seen.has(r.title) && seen.add(r.title)).slice(0, 80);
