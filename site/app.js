@@ -26,7 +26,21 @@ const MEDIA = [["tv", "TV Shows"], ["movie", "Movies"]];   // TV first (owner, 1
 const STALE_HOURS = 30;
 
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Decode leftover entities (feeds double-encode, e.g. "&amp;#039;") before escaping once.
+const ENT = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " " };
+const decode = (s) => {
+  for (let i = 0; i < 3; i++) {
+    const d = s.replace(/&(#\d+|#x[0-9a-f]+|amp|quot|apos|lt|gt|nbsp);/gi, (m, e) => {
+      const k = e.toLowerCase();
+      if (k[0] === "#") { const n = k[1] === "x" ? parseInt(k.slice(2), 16) : parseInt(k.slice(1), 10); return n ? String.fromCodePoint(n) : m; }
+      return ENT[k] ?? m;
+    });
+    if (d === s) break;
+    s = d;
+  }
+  return s;
+};
+const esc = (s) => decode(String(s ?? "")).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch { /* private mode */ } },

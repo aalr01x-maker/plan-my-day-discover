@@ -9,6 +9,7 @@ import hashlib
 import json
 import math
 import os
+import html
 import re
 import time
 import unicodedata
@@ -168,10 +169,13 @@ def similarity(a: str, b: str) -> float:
 
 def strip_html(text: str) -> str:
     text = re.sub(r"<[^>]+>", " ", text or "")
-    text = re.sub(r"&nbsp;|&#160;", " ", text)
-    text = re.sub(r"&amp;", "&", text)
-    text = re.sub(r"&quot;|&#34;", '"', text)
-    text = re.sub(r"&#39;|&apos;", "'", text)
+    # Feeds sometimes double-encode ("&amp;#039;"), so unescape until stable.
+    for _ in range(3):
+        decoded = html.unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    text = re.sub(r"<[^>]+>", " ", text).replace("\xa0", " ")
     return re.sub(r"\s+", " ", text).strip()
 
 
